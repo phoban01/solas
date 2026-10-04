@@ -107,6 +107,9 @@ module solas {
     // Retain, spec 8.5. reclaimDelay is the reclaim time R of Delay.
     reclaim: str -> str,
     reclaimDelay: int,
+    // protected names the claims that an operator lets the member
+    // protect: their devices can only be released, spec 10.10.
+    protected: Set[str],
   }
 
   type State = {
@@ -845,6 +848,8 @@ module solas {
       CFG.preemptible.get(d),
       not(isFree(dv.ref)),
       refPrio(dv.ref) < p,
+      // A protected holder can only release its device, spec 10.10.
+      not(CFG.protected.contains(refClaim(dv.ref))),
       refPrio(dv.preempt) < p,
       s' = {
         ...s,
@@ -1309,6 +1314,7 @@ module solas2 {
     readGap: 15,
     reclaim: Map("d1" -> "Delete", "d2" -> "Retain"),
     reclaimDelay: 20,
+    protected: Set(),
   }).*
 
   pure val fastB = Map("a" -> 0, "b" -> 1)
@@ -1634,6 +1640,7 @@ module solas2delay {
     readGap: 15,
     reclaim: Map("d1" -> "Delete", "d2" -> "Delay"),
     reclaimDelay: 20,
+    protected: Set(),
   }).*
 
   pure val fastB = Map("a" -> 0, "b" -> 1)
@@ -1663,4 +1670,48 @@ module solas2delay {
       .then(tickBy(fastB))
       .then(sweepClear("b", "d2"))
       .expect(isFree(s.devices.get("d2").ref) and safety)
+}
+
+// solas2 with a2 protected: its device can only be released, spec 10.10.
+module solas2protect {
+  import solas(CFG = {
+    clusters: Set("a", "b"),
+    devices: Set("d1", "d2"),
+    claims: Set("a1", "a2", "b1"),
+    owner: Map("a1" -> "a", "a2" -> "a", "b1" -> "b"),
+    clock0: Map("a" -> 0, "b" -> 1000),
+    D: 30,
+    M: 6,
+    tick: 10,
+    drift: 1,
+    unconditionalBind: false,
+    membersFirst: false,
+    adoptAnyUid: false,
+    noTokenCheck: false,
+    priority: Map("a1" -> 1, "a2" -> 0, "b1" -> 2),
+    preemptible: Map("d1" -> true, "d2" -> false),
+    grace: 20,
+    forceClear: false,
+    noPreemptionWait: false,
+    version: Map("a" -> 1, "b" -> 2),
+    skipTokenVersion: 0,
+    readGap: 15,
+    reclaim: Map("d1" -> "Delete", "d2" -> "Retain"),
+    reclaimDelay: 20,
+    protected: Set("a2"),
+  }).*
+
+  // a2 holds the preemptible d1 and a1 holds d2. b1 has a higher priority
+  // than a2, but a2 is protected, so b1 cannot ask for d1.
+  run protectedHeld =
+    init
+      .then(join("a"))
+      .then(bindSend("a2", "d1"))
+      .then(bindLand({ cluster: "a", claim: "a2", dev: "d1", rv: 0, muid: 1 }))
+      .then(adopt("a2", "d1"))
+      .then(bindSend("a1", "d2"))
+      .then(bindLand({ cluster: "a", claim: "a1", dev: "d2", rv: 0, muid: 1 }))
+      .then(adopt("a1", "d2"))
+      .then(join("b"))
+  run protectedTest = protectedHeld.then(requestPreemption("b1", "d1").fail())
 }

@@ -491,6 +491,15 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: The controller MUST clear a request that names its own member and a claim
     TEXT[!MUST,implementation]: that does not exist, as it does for a `claimRef`, spec 6.4.
 
+  SECTION: [10.10. Protected holders](#10-10-protected-holders)
+    TEXT[!MAY]: A claim MAY ask for protection in `DeviceClaim.spec.protected`.
+    TEXT[!MUST]: The `claimRef` of a protected claim MUST carry `protected: true`.
+    TEXT[!MUST,implementation,test]: The server MUST reject a `claimRef` with `protected: true` unless the
+    TEXT[!MUST,implementation,test]: `MemberPolicy` of its member sets `allowProtected`, spec 15.1.
+    TEXT[!MUST,implementation,test]: The server MUST reject a preemption request on a device whose holder is
+    TEXT[!MUST,implementation,test]: protected.
+    TEXT[implementation,test]: A protected holder can only release its device.
+
   SECTION: [11.1. Format version](#11-1-format-version)
     TEXT[!MUST]: The store MUST hold one finalized format version.
     TEXT[implementation]: The finalized format starts at 1.
@@ -629,3 +638,29 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST]: UID are the same, and no `Member` has the old member UID.
     TEXT[!MUST]: After a recovery, the controller MUST set the claim back to `Bound`.
     TEXT[!MUST]: A plain adopt MUST NOT take such a device, spec 6.3.
+
+  SECTION: [15. Limits](#15-limits)
+    TEXT[!MAY]: An operator MAY limit a member, ADR 0021.
+
+  SECTION: [15.1. Policy](#15-1-policy)
+    TEXT[!MUST,implementation,test]: A `MemberPolicy` MUST have the name of the member that it limits.
+    TEXT[!MUST,test]: A member MUST NOT hold more devices than its `maxDevices`.
+
+  SECTION: [15.2. Usage set](#15-2-usage-set)
+    TEXT[!MUST]: The server MUST keep a usage set for each limited member: the devices
+    TEXT[!MUST]: that the member holds or is binding, each with the time it was added.
+    TEXT[!MUST,implementation]: Before the device write of a bind, the server MUST add the device to the
+    TEXT[!MUST,implementation]: usage set with a conditional write, on condition that the set holds
+    TEXT[!MUST,implementation]: fewer devices than `maxDevices`.
+    TEXT[!MUST,implementation]: The device write MUST follow in the same request.
+    TEXT[!MUST,implementation]: A bind over the limit MUST fail with `403 Forbidden`.
+    TEXT[!MUST,implementation,test]: A bind or a preemption request over a rate MUST fail with
+    TEXT[!MUST,implementation,test]: `429 Too Many Requests`.
+
+  SECTION: [15.3. Cleanup](#15-3-cleanup)
+    TEXT[!MUST,implementation]: A clear of a device MUST remove it from the usage set of its member.
+    TEXT[!MAY,implementation]: The member's own server MAY remove an entry whose device the member does
+    TEXT[!MAY,implementation]: not hold.
+    TEXT[!MUST,implementation,test]: It MUST NOT remove such an entry before a grace that is longer than the
+    TEXT[!MUST,implementation,test]: deadline of a request has passed since the entry was added, by its own
+    TEXT[!MUST,implementation,test]: clock.

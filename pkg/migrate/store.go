@@ -34,7 +34,9 @@ var (
 		func() runtime.Object { return &solas.MemberList{} }}
 	formats = resource{solas.Resource("storeformats"), func() runtime.Object { return &solas.StoreFormat{} },
 		func() runtime.Object { return &solas.StoreFormatList{} }}
-	resources = []resource{devices, members, formats}
+	usages = resource{solas.Resource("memberusages"), func() runtime.Object { return &solas.MemberUsage{} },
+		func() runtime.Object { return &solas.MemberUsageList{} }}
+	resources = []resource{devices, members, formats, usages}
 )
 
 // ResourcePrefixes are the resource prefixes of the resources that a move
@@ -57,6 +59,8 @@ type Store struct {
 	Prefix  string
 	Devices k8sstorage.Interface
 	Members k8sstorage.Interface
+	// Usages holds the usage sets of limited members, spec 15.2.
+	Usages k8sstorage.Interface
 	// Formats holds the finalized format of the store, spec 11.1.
 	Formats k8sstorage.Interface
 	// Dynamo is set for a DynamoDB store, so the tool can seal it.
@@ -108,6 +112,10 @@ func Open(ctx context.Context, url, prefix string) (*Store, error) {
 		s.Close()
 		return nil, err
 	}
+	if s.Usages, err = open(usages); err != nil {
+		s.Close()
+		return nil, err
+	}
 	if s.Formats, err = open(formats); err != nil {
 		s.Close()
 		return nil, err
@@ -133,6 +141,8 @@ func (s *Store) storageFor(r resource) k8sstorage.Interface {
 		return s.Devices
 	case members.gr:
 		return s.Members
+	case usages.gr:
+		return s.Usages
 	}
 	return s.Formats
 }
@@ -147,6 +157,10 @@ func (s *Store) list(ctx context.Context, r resource) ([]runtime.Object, error) 
 	var out []runtime.Object
 	switch l := list.(type) {
 	case *solas.DeviceList:
+		for i := range l.Items {
+			out = append(out, &l.Items[i])
+		}
+	case *solas.MemberUsageList:
 		for i := range l.Items {
 			out = append(out, &l.Items[i])
 		}

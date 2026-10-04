@@ -804,6 +804,17 @@ list, as it does for a `claimRef`, spec 8.3.
 The controller MUST clear a request that names its own member and a claim
 that does not exist, as it does for a `claimRef`, spec 6.4.
 
+### 10.10. Protected holders
+
+A claim MAY ask for protection in `DeviceClaim.spec.protected`.
+The `claimRef` of a protected claim MUST carry `protected: true`.
+The server MUST reject a `claimRef` with `protected: true` unless the
+`MemberPolicy` of its member sets `allowProtected`, spec 15.1.
+So only an operator decides which members may protect their claims.
+The server MUST reject a preemption request on a device whose holder is
+protected.
+A protected holder can only release its device.
+
 ## 11. Version skew
 
 Member clusters upgrade in waves, so servers of two releases share one
@@ -1008,3 +1019,38 @@ The server MUST reject a recovery unless the member name and the claim
 UID are the same, and no `Member` has the old member UID.
 After a recovery, the controller MUST set the claim back to `Bound`.
 A plain adopt MUST NOT take such a device, spec 6.3.
+
+## 15. Limits
+
+An operator MAY limit a member, ADR 0021.
+
+### 15.1. Policy
+
+A `MemberPolicy` MUST have the name of the member that it limits.
+`spec.maxDevices` is the most devices that the member may hold.
+`spec.bindsPerMinute` and `spec.preemptionsPerMinute` are rates.
+A member with no `MemberPolicy` has no limit.
+A member MUST NOT hold more devices than its `maxDevices`.
+
+### 15.2. Usage set
+
+The server MUST keep a usage set for each limited member: the devices
+that the member holds or is binding, each with the time it was added.
+Before the device write of a bind, the server MUST add the device to the
+usage set with a conditional write, on condition that the set holds
+fewer devices than `maxDevices`.
+The device write MUST follow in the same request.
+So every device that a member holds is in its usage set.
+A bind over the limit MUST fail with `403 Forbidden`.
+A bind or a preemption request over a rate MUST fail with
+`429 Too Many Requests`.
+
+### 15.3. Cleanup
+
+A clear of a device MUST remove it from the usage set of its member.
+The member's own server MAY remove an entry whose device the member does
+not hold.
+It MUST NOT remove such an entry before a grace that is longer than the
+deadline of a request has passed since the entry was added, by its own
+clock.
+A bind still in flight then cannot land after its entry is gone.

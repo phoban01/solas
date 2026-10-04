@@ -22,6 +22,16 @@ func init() {
 // RegisterConversions adds conversion functions to the given scheme.
 // Public to allow building arbitrary schemes.
 func RegisterConversions(s *runtime.Scheme) error {
+	if err := s.AddGeneratedConversionFunc((*Bucket)(nil), (*solas.Bucket)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_Bucket_To_solas_Bucket(a.(*Bucket), b.(*solas.Bucket), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.Bucket)(nil), (*Bucket)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_Bucket_To_v1alpha1_Bucket(a.(*solas.Bucket), b.(*Bucket), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*ClaimRef)(nil), (*solas.ClaimRef)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_ClaimRef_To_solas_ClaimRef(a.(*ClaimRef), b.(*solas.ClaimRef), scope)
 	}); err != nil {
@@ -92,6 +102,36 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*MemberPolicy)(nil), (*solas.MemberPolicy)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_MemberPolicy_To_solas_MemberPolicy(a.(*MemberPolicy), b.(*solas.MemberPolicy), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.MemberPolicy)(nil), (*MemberPolicy)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_MemberPolicy_To_v1alpha1_MemberPolicy(a.(*solas.MemberPolicy), b.(*MemberPolicy), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*MemberPolicyList)(nil), (*solas.MemberPolicyList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_MemberPolicyList_To_solas_MemberPolicyList(a.(*MemberPolicyList), b.(*solas.MemberPolicyList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.MemberPolicyList)(nil), (*MemberPolicyList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_MemberPolicyList_To_v1alpha1_MemberPolicyList(a.(*solas.MemberPolicyList), b.(*MemberPolicyList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*MemberPolicySpec)(nil), (*solas.MemberPolicySpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_MemberPolicySpec_To_solas_MemberPolicySpec(a.(*MemberPolicySpec), b.(*solas.MemberPolicySpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.MemberPolicySpec)(nil), (*MemberPolicySpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_MemberPolicySpec_To_v1alpha1_MemberPolicySpec(a.(*solas.MemberPolicySpec), b.(*MemberPolicySpec), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*MemberSpec)(nil), (*solas.MemberSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_MemberSpec_To_solas_MemberSpec(a.(*MemberSpec), b.(*solas.MemberSpec), scope)
 	}); err != nil {
@@ -109,6 +149,26 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*solas.MemberStatus)(nil), (*MemberStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_solas_MemberStatus_To_v1alpha1_MemberStatus(a.(*solas.MemberStatus), b.(*MemberStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*MemberUsage)(nil), (*solas.MemberUsage)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_MemberUsage_To_solas_MemberUsage(a.(*MemberUsage), b.(*solas.MemberUsage), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.MemberUsage)(nil), (*MemberUsage)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_MemberUsage_To_v1alpha1_MemberUsage(a.(*solas.MemberUsage), b.(*MemberUsage), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*MemberUsageList)(nil), (*solas.MemberUsageList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_MemberUsageList_To_solas_MemberUsageList(a.(*MemberUsageList), b.(*solas.MemberUsageList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.MemberUsageList)(nil), (*MemberUsageList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_MemberUsageList_To_v1alpha1_MemberUsageList(a.(*solas.MemberUsageList), b.(*MemberUsageList), scope)
 	}); err != nil {
 		return err
 	}
@@ -152,7 +212,37 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*UsageEntry)(nil), (*solas.UsageEntry)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_UsageEntry_To_solas_UsageEntry(a.(*UsageEntry), b.(*solas.UsageEntry), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*solas.UsageEntry)(nil), (*UsageEntry)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_solas_UsageEntry_To_v1alpha1_UsageEntry(a.(*solas.UsageEntry), b.(*UsageEntry), scope)
+	}); err != nil {
+		return err
+	}
 	return nil
+}
+
+func autoConvert_v1alpha1_Bucket_To_solas_Bucket(in *Bucket, out *solas.Bucket, s conversion.Scope) error {
+	*out = *(*solas.Bucket)(unsafe.Pointer(in))
+	return nil
+}
+
+// Convert_v1alpha1_Bucket_To_solas_Bucket is an autogenerated conversion function.
+func Convert_v1alpha1_Bucket_To_solas_Bucket(in *Bucket, out *solas.Bucket, s conversion.Scope) error {
+	return autoConvert_v1alpha1_Bucket_To_solas_Bucket(in, out, s)
+}
+
+func autoConvert_solas_Bucket_To_v1alpha1_Bucket(in *solas.Bucket, out *Bucket, s conversion.Scope) error {
+	*out = *(*Bucket)(unsafe.Pointer(in))
+	return nil
+}
+
+// Convert_solas_Bucket_To_v1alpha1_Bucket is an autogenerated conversion function.
+func Convert_solas_Bucket_To_v1alpha1_Bucket(in *solas.Bucket, out *Bucket, s conversion.Scope) error {
+	return autoConvert_solas_Bucket_To_v1alpha1_Bucket(in, out, s)
 }
 
 func autoConvert_v1alpha1_ClaimRef_To_solas_ClaimRef(in *ClaimRef, out *solas.ClaimRef, s conversion.Scope) error {
@@ -323,6 +413,74 @@ func Convert_solas_MemberList_To_v1alpha1_MemberList(in *solas.MemberList, out *
 	return autoConvert_solas_MemberList_To_v1alpha1_MemberList(in, out, s)
 }
 
+func autoConvert_v1alpha1_MemberPolicy_To_solas_MemberPolicy(in *MemberPolicy, out *solas.MemberPolicy, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1alpha1_MemberPolicySpec_To_solas_MemberPolicySpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_v1alpha1_MemberPolicy_To_solas_MemberPolicy is an autogenerated conversion function.
+func Convert_v1alpha1_MemberPolicy_To_solas_MemberPolicy(in *MemberPolicy, out *solas.MemberPolicy, s conversion.Scope) error {
+	return autoConvert_v1alpha1_MemberPolicy_To_solas_MemberPolicy(in, out, s)
+}
+
+func autoConvert_solas_MemberPolicy_To_v1alpha1_MemberPolicy(in *solas.MemberPolicy, out *MemberPolicy, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_solas_MemberPolicySpec_To_v1alpha1_MemberPolicySpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_solas_MemberPolicy_To_v1alpha1_MemberPolicy is an autogenerated conversion function.
+func Convert_solas_MemberPolicy_To_v1alpha1_MemberPolicy(in *solas.MemberPolicy, out *MemberPolicy, s conversion.Scope) error {
+	return autoConvert_solas_MemberPolicy_To_v1alpha1_MemberPolicy(in, out, s)
+}
+
+func autoConvert_v1alpha1_MemberPolicyList_To_solas_MemberPolicyList(in *MemberPolicyList, out *solas.MemberPolicyList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]solas.MemberPolicy)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1alpha1_MemberPolicyList_To_solas_MemberPolicyList is an autogenerated conversion function.
+func Convert_v1alpha1_MemberPolicyList_To_solas_MemberPolicyList(in *MemberPolicyList, out *solas.MemberPolicyList, s conversion.Scope) error {
+	return autoConvert_v1alpha1_MemberPolicyList_To_solas_MemberPolicyList(in, out, s)
+}
+
+func autoConvert_solas_MemberPolicyList_To_v1alpha1_MemberPolicyList(in *solas.MemberPolicyList, out *MemberPolicyList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]MemberPolicy)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_solas_MemberPolicyList_To_v1alpha1_MemberPolicyList is an autogenerated conversion function.
+func Convert_solas_MemberPolicyList_To_v1alpha1_MemberPolicyList(in *solas.MemberPolicyList, out *MemberPolicyList, s conversion.Scope) error {
+	return autoConvert_solas_MemberPolicyList_To_v1alpha1_MemberPolicyList(in, out, s)
+}
+
+func autoConvert_v1alpha1_MemberPolicySpec_To_solas_MemberPolicySpec(in *MemberPolicySpec, out *solas.MemberPolicySpec, s conversion.Scope) error {
+	*out = *(*solas.MemberPolicySpec)(unsafe.Pointer(in))
+	return nil
+}
+
+// Convert_v1alpha1_MemberPolicySpec_To_solas_MemberPolicySpec is an autogenerated conversion function.
+func Convert_v1alpha1_MemberPolicySpec_To_solas_MemberPolicySpec(in *MemberPolicySpec, out *solas.MemberPolicySpec, s conversion.Scope) error {
+	return autoConvert_v1alpha1_MemberPolicySpec_To_solas_MemberPolicySpec(in, out, s)
+}
+
+func autoConvert_solas_MemberPolicySpec_To_v1alpha1_MemberPolicySpec(in *solas.MemberPolicySpec, out *MemberPolicySpec, s conversion.Scope) error {
+	*out = *(*MemberPolicySpec)(unsafe.Pointer(in))
+	return nil
+}
+
+// Convert_solas_MemberPolicySpec_To_v1alpha1_MemberPolicySpec is an autogenerated conversion function.
+func Convert_solas_MemberPolicySpec_To_v1alpha1_MemberPolicySpec(in *solas.MemberPolicySpec, out *MemberPolicySpec, s conversion.Scope) error {
+	return autoConvert_solas_MemberPolicySpec_To_v1alpha1_MemberPolicySpec(in, out, s)
+}
+
 func autoConvert_v1alpha1_MemberSpec_To_solas_MemberSpec(in *MemberSpec, out *solas.MemberSpec, s conversion.Scope) error {
 	*out = *(*solas.MemberSpec)(unsafe.Pointer(in))
 	return nil
@@ -361,6 +519,52 @@ func autoConvert_solas_MemberStatus_To_v1alpha1_MemberStatus(in *solas.MemberSta
 // Convert_solas_MemberStatus_To_v1alpha1_MemberStatus is an autogenerated conversion function.
 func Convert_solas_MemberStatus_To_v1alpha1_MemberStatus(in *solas.MemberStatus, out *MemberStatus, s conversion.Scope) error {
 	return autoConvert_solas_MemberStatus_To_v1alpha1_MemberStatus(in, out, s)
+}
+
+func autoConvert_v1alpha1_MemberUsage_To_solas_MemberUsage(in *MemberUsage, out *solas.MemberUsage, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	out.Entries = *(*[]solas.UsageEntry)(unsafe.Pointer(&in.Entries))
+	out.Buckets = *(*[]solas.Bucket)(unsafe.Pointer(&in.Buckets))
+	return nil
+}
+
+// Convert_v1alpha1_MemberUsage_To_solas_MemberUsage is an autogenerated conversion function.
+func Convert_v1alpha1_MemberUsage_To_solas_MemberUsage(in *MemberUsage, out *solas.MemberUsage, s conversion.Scope) error {
+	return autoConvert_v1alpha1_MemberUsage_To_solas_MemberUsage(in, out, s)
+}
+
+func autoConvert_solas_MemberUsage_To_v1alpha1_MemberUsage(in *solas.MemberUsage, out *MemberUsage, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	out.Entries = *(*[]UsageEntry)(unsafe.Pointer(&in.Entries))
+	out.Buckets = *(*[]Bucket)(unsafe.Pointer(&in.Buckets))
+	return nil
+}
+
+// Convert_solas_MemberUsage_To_v1alpha1_MemberUsage is an autogenerated conversion function.
+func Convert_solas_MemberUsage_To_v1alpha1_MemberUsage(in *solas.MemberUsage, out *MemberUsage, s conversion.Scope) error {
+	return autoConvert_solas_MemberUsage_To_v1alpha1_MemberUsage(in, out, s)
+}
+
+func autoConvert_v1alpha1_MemberUsageList_To_solas_MemberUsageList(in *MemberUsageList, out *solas.MemberUsageList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]solas.MemberUsage)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1alpha1_MemberUsageList_To_solas_MemberUsageList is an autogenerated conversion function.
+func Convert_v1alpha1_MemberUsageList_To_solas_MemberUsageList(in *MemberUsageList, out *solas.MemberUsageList, s conversion.Scope) error {
+	return autoConvert_v1alpha1_MemberUsageList_To_solas_MemberUsageList(in, out, s)
+}
+
+func autoConvert_solas_MemberUsageList_To_v1alpha1_MemberUsageList(in *solas.MemberUsageList, out *MemberUsageList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]MemberUsage)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_solas_MemberUsageList_To_v1alpha1_MemberUsageList is an autogenerated conversion function.
+func Convert_solas_MemberUsageList_To_v1alpha1_MemberUsageList(in *solas.MemberUsageList, out *MemberUsageList, s conversion.Scope) error {
+	return autoConvert_solas_MemberUsageList_To_v1alpha1_MemberUsageList(in, out, s)
 }
 
 func autoConvert_v1alpha1_PreemptionRequest_To_solas_PreemptionRequest(in *PreemptionRequest, out *solas.PreemptionRequest, s conversion.Scope) error {
@@ -447,4 +651,24 @@ func autoConvert_solas_StoreFormatList_To_v1alpha1_StoreFormatList(in *solas.Sto
 // Convert_solas_StoreFormatList_To_v1alpha1_StoreFormatList is an autogenerated conversion function.
 func Convert_solas_StoreFormatList_To_v1alpha1_StoreFormatList(in *solas.StoreFormatList, out *StoreFormatList, s conversion.Scope) error {
 	return autoConvert_solas_StoreFormatList_To_v1alpha1_StoreFormatList(in, out, s)
+}
+
+func autoConvert_v1alpha1_UsageEntry_To_solas_UsageEntry(in *UsageEntry, out *solas.UsageEntry, s conversion.Scope) error {
+	*out = *(*solas.UsageEntry)(unsafe.Pointer(in))
+	return nil
+}
+
+// Convert_v1alpha1_UsageEntry_To_solas_UsageEntry is an autogenerated conversion function.
+func Convert_v1alpha1_UsageEntry_To_solas_UsageEntry(in *UsageEntry, out *solas.UsageEntry, s conversion.Scope) error {
+	return autoConvert_v1alpha1_UsageEntry_To_solas_UsageEntry(in, out, s)
+}
+
+func autoConvert_solas_UsageEntry_To_v1alpha1_UsageEntry(in *solas.UsageEntry, out *UsageEntry, s conversion.Scope) error {
+	*out = *(*UsageEntry)(unsafe.Pointer(in))
+	return nil
+}
+
+// Convert_solas_UsageEntry_To_v1alpha1_UsageEntry is an autogenerated conversion function.
+func Convert_solas_UsageEntry_To_v1alpha1_UsageEntry(in *solas.UsageEntry, out *UsageEntry, s conversion.Scope) error {
+	return autoConvert_solas_UsageEntry_To_v1alpha1_UsageEntry(in, out, s)
 }

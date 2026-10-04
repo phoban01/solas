@@ -131,6 +131,11 @@ func validatePreemption(d, old *solas.Device) field.ErrorList {
 			errs = append(errs, field.Forbidden(path, "the device is not preemptible"))
 		case old.Status.ClaimRef == nil:
 			errs = append(errs, field.Forbidden(path, "the device is free; bind it instead"))
+		//= spec/solas.md#10-10-protected-holders
+		//# The server MUST reject a preemption request on a device whose holder is
+		//# protected.
+		case old.Status.ClaimRef.Protected:
+			errs = append(errs, field.Forbidden(path, "the holder is protected; it can only release the device"))
 		//= spec/solas.md#10-5-preemption-request
 		//# The server MUST reject a request whose priority is not greater than the
 		//# priority of the holder.
@@ -186,6 +191,24 @@ func validateReclaim(spec *solas.DeviceSpec, path *field.Path) field.ErrorList {
 	default:
 		errs = append(errs, field.NotSupported(path.Child("reclaimPolicy"), spec.ReclaimPolicy,
 			[]solas.ReclaimPolicy{solas.ReclaimDelete, solas.ReclaimDelay, solas.ReclaimRetain}))
+	}
+	return errs
+}
+
+//= spec/solas.md#15-1-policy
+//# A `MemberPolicy` MUST have the name of the member that it limits.
+
+// ValidateMemberPolicy checks a member policy. Its name is a member name,
+// and no limit is negative.
+func ValidateMemberPolicy(p *solas.MemberPolicy) field.ErrorList {
+	errs := genericvalidation.ValidateObjectMeta(&p.ObjectMeta, false, genericvalidation.NameIsDNSSubdomain, metaPath)
+	spec := field.NewPath("spec")
+	for name, v := range map[string]*int32{
+		"maxDevices": p.Spec.MaxDevices, "bindsPerMinute": p.Spec.BindsPerMinute, "preemptionsPerMinute": p.Spec.PreemptionsPerMinute,
+	} {
+		if v != nil && *v < 0 {
+			errs = append(errs, field.Invalid(spec.Child(name), *v, "must not be negative"))
+		}
 	}
 	return errs
 }

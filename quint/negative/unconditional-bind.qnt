@@ -25,5 +25,6 @@ module unconditional_bind {
     readGap: 15,
     reclaim: Map("d1" -> "Delete", "d2" -> "Delete"),
     reclaimDelay: 0,
+    protected: Set(),
   }).* from "../solas"
 }

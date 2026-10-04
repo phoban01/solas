@@ -190,3 +190,27 @@ func TestBindInANewEpoch(t *testing.T) {
 		t.Error("guard accepted token 8 in epoch 3")
 	}
 }
+
+//= spec/solas.md#10-10-protected-holders
+//= type=test
+//# The server MUST reject a `claimRef` with `protected: true` unless the
+//# `MemberPolicy` of its member sets `allowProtected`, spec 15.1.
+
+func TestProtectedNeedsThePolicy(t *testing.T) {
+	ctx := context.Background()
+	free := dev("d", nil)
+	bound := dev("d", &solas.ClaimRef{Member: "a", MemberUID: "mu", Namespace: "ns", Name: "c1", UID: "u1", Protected: true})
+
+	st := NewStatusStrategy(NewStrategy(nil))
+	if errs := st.ValidateUpdate(ctx, bound, free); len(errs) == 0 {
+		t.Error("a protected bind with no policy passed")
+	}
+	for allow, wantOK := range map[bool]bool{false: false, true: true} {
+		st.policies = func(context.Context, string) (*solas.MemberPolicy, error) {
+			return &solas.MemberPolicy{Spec: solas.MemberPolicySpec{AllowProtected: allow}}, nil
+		}
+		if errs := st.ValidateUpdate(ctx, bound, free); (len(errs) == 0) != wantOK {
+			t.Errorf("allowProtected %v: errors %v, want ok %v", allow, errs, wantOK)
+		}
+	}
+}

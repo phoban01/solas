@@ -33,6 +33,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&MemberList{},
 		&StoreFormat{},
 		&StoreFormatList{},
+		&MemberPolicy{},
+		&MemberPolicyList{},
+		&MemberUsage{},
+		&MemberUsageList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

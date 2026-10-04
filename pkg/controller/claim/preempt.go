@@ -59,7 +59,9 @@ func (r *Reconciler) requestPreemption(ctx context.Context, claim *claimsv1alpha
 		if ref == nil || !d.Spec.Preemptible || !d.DeletionTimestamp.IsZero() || !sel.Matches(d) {
 			continue
 		}
-		if ref.Priority >= prio {
+		//= spec/solas.md#10-10-protected-holders
+		//# A protected holder can only release its device.
+		if ref.Priority >= prio || ref.Protected {
 			continue
 		}
 		if p := d.Status.Preemption; p != nil && p.Claim.Priority >= prio {

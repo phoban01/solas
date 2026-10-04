@@ -27,9 +27,16 @@ type strategy struct {
 	names.NameGenerator
 }
 
+// PolicyLookup returns the MemberPolicy of a member, or nil when it has
+// none, spec 15.1.
+type PolicyLookup func(ctx context.Context, member string) (*solas.MemberPolicy, error)
+
 // statusStrategy handles updates of the status subresource.
 type statusStrategy struct {
 	strategy
+	// policies finds the MemberPolicy of a member. Nil means that no
+	// member has one.
+	policies PolicyLookup
 }
 
 // NewStrategy returns the strategy for devices.
@@ -39,7 +46,7 @@ func NewStrategy(typer runtime.ObjectTyper) strategy {
 
 // NewStatusStrategy returns the strategy for the status of devices.
 func NewStatusStrategy(s strategy) statusStrategy {
-	return statusStrategy{s}
+	return statusStrategy{strategy: s}
 }
 
 //= spec/solas.md#5-1-resource
@@ -129,8 +136,10 @@ func nextToken(old, d *solas.Device) int64 {
 	return old.Status.FencingToken
 }
 
-func (statusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
-	return validation.ValidateDeviceStatusUpdate(obj.(*solas.Device), old.(*solas.Device))
+func (s statusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	d, o := obj.(*solas.Device), old.(*solas.Device)
+	errs := validation.ValidateDeviceStatusUpdate(d, o)
+	return append(errs, s.validateProtected(ctx, d, o)...)
 }
 
 func (statusStrategy) WarningsOnUpdate(ctx context.Context, obj, old runtime.Object) []string {
@@ -179,4 +188,28 @@ func lastRelease(ctx context.Context, old, d *solas.Device) *solas.Release {
 		by = u.GetName()
 	}
 	return &solas.Release{By: by, At: metav1.Now(), Claim: *old.Status.ClaimRef}
+}
+
+//= spec/solas.md#10-10-protected-holders
+//# The server MUST reject a `claimRef` with `protected: true` unless the
+//# `MemberPolicy` of its member sets `allowProtected`, spec 15.1.
+
+// validateProtected rejects a new protected claimRef of a member whose
+// policy does not allow protection.
+func (s statusStrategy) validateProtected(ctx context.Context, d, old *solas.Device) field.ErrorList {
+	ref := d.Status.ClaimRef
+	if ref == nil || !ref.Protected || (old.Status.ClaimRef != nil && old.Status.ClaimRef.Protected) {
+		return nil
+	}
+	if s.policies != nil {
+		p, err := s.policies(ctx, ref.Member)
+		if err != nil {
+			return field.ErrorList{field.InternalError(field.NewPath("status", "claimRef", "protected"), err)}
+		}
+		if p != nil && p.Spec.AllowProtected {
+			return nil
+		}
+	}
+	return field.ErrorList{field.Forbidden(field.NewPath("status", "claimRef", "protected"),
+		fmt.Sprintf("member %s may not protect its claims; an operator sets allowProtected in its MemberPolicy", ref.Member))}
 }

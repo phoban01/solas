@@ -60,6 +60,10 @@ type DeviceClaimSpec struct {
 	// claim may preempt a preemptible device held at a lower priority.
 	// +optional
 	Priority int32 `json:"priority,omitempty"`
+	// Protected asks that the device can only be released, not preempted.
+	// The member needs allowProtected in its MemberPolicy, spec 10.10.
+	// +optional
+	Protected bool `json:"protected,omitempty"`
 }
 
 // DeviceSelector matches devices. Both parts must match, spec 10.3.

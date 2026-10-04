@@ -23,11 +23,39 @@ type REST struct {
 
 // StatusREST is the store of the status subresource of devices.
 type StatusREST struct {
-	store *genericregistry.Store
+	store    *genericregistry.Store
+	policies PolicyLookup
+	usage    Usage
 }
 
 // NewREST returns the stores of devices and their status.
 func NewREST(scheme *runtime.Scheme, optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST, error) {
+	return NewRESTWithOptions(scheme, optsGetter, Options{})
+}
+
+// Usage keeps the usage sets of limited members, spec 15.2.
+type Usage interface {
+	Admit(ctx context.Context, member, device string, max, rate *int32) error
+	TakePreemption(ctx context.Context, member string, rate int32) error
+	Remove(ctx context.Context, member, device string) error
+}
+
+// Options holds what the limits of spec 15 and protection of spec 10.10
+// need: the lookup of member policies and the usage sets.
+type Options struct {
+	Policies PolicyLookup
+	Usage    Usage
+}
+
+// NewRESTWithPolicies returns the stores of devices with a lookup of
+// member policies.
+func NewRESTWithPolicies(scheme *runtime.Scheme, optsGetter generic.RESTOptionsGetter, policies PolicyLookup) (*REST, *StatusREST, error) {
+	return NewRESTWithOptions(scheme, optsGetter, Options{Policies: policies})
+}
+
+// NewRESTWithOptions returns the stores of devices with the limits and
+// protection of the options.
+func NewRESTWithOptions(scheme *runtime.Scheme, optsGetter generic.RESTOptionsGetter, opts Options) (*REST, *StatusREST, error) {
 	strategy := NewStrategy(scheme)
 	store := &genericregistry.Store{
 		NewFunc:                   func() runtime.Object { return &solas.Device{} },
@@ -54,9 +82,10 @@ func NewREST(scheme *runtime.Scheme, optsGetter generic.RESTOptionsGetter) (*RES
 	//# `Device` MUST have a `status` subresource.
 	statusStore := *store
 	status := NewStatusStrategy(strategy)
+	status.policies = opts.Policies
 	statusStore.UpdateStrategy = status
 	statusStore.ResetFieldsStrategy = status
-	return &REST{store}, &StatusREST{store: &statusStore}, nil
+	return &REST{store}, &StatusREST{store: &statusStore, policies: opts.Policies, usage: opts.Usage}, nil
 }
 
 // Delete rejects the delete of a bound device.
@@ -110,12 +139,63 @@ func (r *StatusREST) Get(ctx context.Context, name string, options *metav1.GetOp
 	return r.store.Get(ctx, name, options)
 }
 
-// Update updates the status of a device.
+// Update updates the status of a device. For a member with a limit, a bind
+// first reserves a place in the member's usage set, and a clear then takes
+// the device out of it, spec 15.2 and 15.3.
 func (r *StatusREST) Update(ctx context.Context, name string, objInfo rest.UpdatedObjectInfo,
 	createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc,
 	forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
 	// Status updates never create a device.
-	return r.store.Update(ctx, name, objInfo, createValidation, updateValidation, false, options)
+	update := func() (runtime.Object, bool, error) {
+		return r.store.Update(ctx, name, objInfo, createValidation, updateValidation, false, options)
+	}
+	if r.usage == nil || r.policies == nil {
+		return update()
+	}
+	cur, err := r.store.Get(ctx, name, &metav1.GetOptions{})
+	if err != nil {
+		return update()
+	}
+	old := cur.(*solas.Device)
+	next, err := objInfo.UpdatedObject(ctx, old)
+	if err != nil {
+		return update()
+	}
+	oldRef, newRef := old.Status.ClaimRef, next.(*solas.Device).Status.ClaimRef
+	if oldRef == nil && newRef != nil {
+		p, err := r.policies(ctx, newRef.Member)
+		if err != nil {
+			return nil, false, err
+		}
+		//= spec/solas.md#15-2-usage-set
+		//# The device write MUST follow in the same request.
+		//
+		// A failed device write leaves the entry. The cleanup takes it out
+		// after a grace, spec 15.3: removing it here could remove the entry
+		// of a second bind of the same device that is still in flight.
+		if p != nil && (p.Spec.MaxDevices != nil || p.Spec.BindsPerMinute != nil) {
+			if err := r.usage.Admit(ctx, newRef.Member, name, p.Spec.MaxDevices, p.Spec.BindsPerMinute); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	if req := next.(*solas.Device).Status.Preemption; req != nil && (old.Status.Preemption == nil || old.Status.Preemption.Claim.UID != req.Claim.UID) {
+		p, err := r.policies(ctx, req.Claim.Member)
+		if err != nil {
+			return nil, false, err
+		}
+		if p != nil && p.Spec.PreemptionsPerMinute != nil {
+			if err := r.usage.TakePreemption(ctx, req.Claim.Member, *p.Spec.PreemptionsPerMinute); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	out, created, err := update()
+	if err == nil && oldRef != nil && newRef == nil {
+		// A failure here leaves the entry for the cleanup.
+		_ = r.usage.Remove(ctx, oldRef.Member, name)
+	}
+	return out, created, err
 }
 
 // GetResetFields returns the fields that the status subresource resets.

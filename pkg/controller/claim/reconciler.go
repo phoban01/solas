@@ -180,6 +180,7 @@ func (r *Reconciler) bind(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		Name:      claim.Name,
 		UID:       claim.UID,
 		Priority:  claim.Spec.Priority,
+		Protected: claim.Spec.Protected,
 		BoundAt:   ptrTime(r.now()),
 	}
 	if err := r.Client.Status().Update(ctx, d); err != nil {

@@ -33,6 +33,9 @@ spec:
                   description: A higher number is more urgent, and may preempt a preemptible device held at a lower priority.
                   type: integer
                   format: int32
+                protected:
+                  description: The device can only be released, not preempted. The member needs allowProtected in its MemberPolicy.
+                  type: boolean
                 selector:
                   description: Matches Device labels and a CEL expression. Empty matches every device.
                   type: object

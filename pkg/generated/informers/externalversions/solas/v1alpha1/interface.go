@@ -14,6 +14,8 @@ type Interface interface {
 	Devices() TypedDeviceInformer
 	// Members returns a MemberInformer.
 	Members() TypedMemberInformer
+	// MemberPolicies returns a MemberPolicyInformer.
+	MemberPolicies() TypedMemberPolicyInformer
 }
 
 type version struct {
@@ -35,4 +37,9 @@ func (v *version) Devices() TypedDeviceInformer {
 // Members returns a TypedMemberInformer.
 func (v *version) Members() TypedMemberInformer {
 	return &memberInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
+// MemberPolicies returns a TypedMemberPolicyInformer.
+func (v *version) MemberPolicies() TypedMemberPolicyInformer {
+	return &memberPolicyInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }

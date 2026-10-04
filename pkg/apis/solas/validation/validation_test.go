@@ -197,3 +197,22 @@ func TestReclaimPolicy(t *testing.T) {
 		}
 	}
 }
+
+//= spec/solas.md#10-10-protected-holders
+//= type=test
+//# The server MUST reject a preemption request on a device whose holder is
+//# protected.
+
+func TestNoRequestOnAProtectedHolder(t *testing.T) {
+	holder := ref("c1")
+	holder.Protected = true
+	old := device(holder)
+	old.Spec.Preemptible = true
+	d := old.DeepCopy()
+	asker := ref("c2")
+	asker.Priority = 9
+	d.Status.Preemption = &solas.PreemptionRequest{Claim: *asker}
+	if errs := ValidateDeviceStatusUpdate(d, old); len(errs) == 0 {
+		t.Error("a preemption request on a protected holder passed")
+	}
+}

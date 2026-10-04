@@ -11,3 +11,7 @@ type DeviceListerExpansion interface{}
 // MemberListerExpansion allows custom methods to be added to
 // MemberLister.
 type MemberListerExpansion interface{}
+
+// MemberPolicyListerExpansion allows custom methods to be added to
+// MemberPolicyLister.
+type MemberPolicyListerExpansion interface{}

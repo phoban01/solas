@@ -192,3 +192,25 @@ func TestOrphanSweepClearsRequestOfGoneClaim(t *testing.T) {
 		t.Error("the request of a gone claim stands")
 	}
 }
+
+//= spec/solas.md#10-10-protected-holders
+//= type=test
+//# A protected holder can only release its device.
+
+// TestNoRequestForAProtectedHolder: a claim of higher priority does not
+// ask for a preemptible device whose holder is protected.
+func TestNoRequestForAProtectedHolder(t *testing.T) {
+	low, high := prioClaim("low", 0), prioClaim("high", 5)
+	held := refTo(low, muid)
+	held.Protected = true
+	d := preemptibleDevice("d1", 30)
+	d.Status.ClaimRef, d.Status.FencingToken = held, 1
+	low.Finalizers = []string{claimsv1alpha1.ReleaseFinalizer}
+	low.Status = claimsv1alpha1.DeviceClaimStatus{Phase: claimsv1alpha1.ClaimBound, DeviceName: "d1", MemberUID: muid, FencingToken: 1}
+	k := fakekube.NewClient(d, low, high)
+	r := newReconciler(k, live())
+	settle(t, r, high)
+	if got := getDevice(t, k, "d1"); got.Status.Preemption != nil {
+		t.Errorf("request = %+v, want none for a protected holder", got.Status.Preemption)
+	}
+}

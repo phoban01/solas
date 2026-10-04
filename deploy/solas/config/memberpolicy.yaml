@@ -1,0 +1,11 @@
+# Limits of one member, spec 15. The name is the cluster ID of the member.
+# An operator writes it; keep the RBAC for memberpolicies to operators.
+apiVersion: solas.dev/v1alpha1
+kind: MemberPolicy
+metadata:
+  name: change-me
+spec:
+  maxDevices: 4
+  bindsPerMinute: 30
+  preemptionsPerMinute: 5
+  allowProtected: false

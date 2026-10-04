@@ -19,6 +19,7 @@ import (
 
 func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenAPIDefinition {
 	return map[string]common.OpenAPIDefinition{
+		v1alpha1.Bucket{}.OpenAPIModelName():              schema_pkg_apis_solas_v1alpha1_Bucket(ref),
 		v1alpha1.ClaimRef{}.OpenAPIModelName():            schema_pkg_apis_solas_v1alpha1_ClaimRef(ref),
 		v1alpha1.Device{}.OpenAPIModelName():              schema_pkg_apis_solas_v1alpha1_Device(ref),
 		v1alpha1.DeviceList{}.OpenAPIModelName():          schema_pkg_apis_solas_v1alpha1_DeviceList(ref),
@@ -26,12 +27,18 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		v1alpha1.DeviceStatus{}.OpenAPIModelName():        schema_pkg_apis_solas_v1alpha1_DeviceStatus(ref),
 		v1alpha1.Member{}.OpenAPIModelName():              schema_pkg_apis_solas_v1alpha1_Member(ref),
 		v1alpha1.MemberList{}.OpenAPIModelName():          schema_pkg_apis_solas_v1alpha1_MemberList(ref),
+		v1alpha1.MemberPolicy{}.OpenAPIModelName():        schema_pkg_apis_solas_v1alpha1_MemberPolicy(ref),
+		v1alpha1.MemberPolicyList{}.OpenAPIModelName():    schema_pkg_apis_solas_v1alpha1_MemberPolicyList(ref),
+		v1alpha1.MemberPolicySpec{}.OpenAPIModelName():    schema_pkg_apis_solas_v1alpha1_MemberPolicySpec(ref),
 		v1alpha1.MemberSpec{}.OpenAPIModelName():          schema_pkg_apis_solas_v1alpha1_MemberSpec(ref),
 		v1alpha1.MemberStatus{}.OpenAPIModelName():        schema_pkg_apis_solas_v1alpha1_MemberStatus(ref),
+		v1alpha1.MemberUsage{}.OpenAPIModelName():         schema_pkg_apis_solas_v1alpha1_MemberUsage(ref),
+		v1alpha1.MemberUsageList{}.OpenAPIModelName():     schema_pkg_apis_solas_v1alpha1_MemberUsageList(ref),
 		v1alpha1.PreemptionRequest{}.OpenAPIModelName():   schema_pkg_apis_solas_v1alpha1_PreemptionRequest(ref),
 		v1alpha1.Release{}.OpenAPIModelName():             schema_pkg_apis_solas_v1alpha1_Release(ref),
 		v1alpha1.StoreFormat{}.OpenAPIModelName():         schema_pkg_apis_solas_v1alpha1_StoreFormat(ref),
 		v1alpha1.StoreFormatList{}.OpenAPIModelName():     schema_pkg_apis_solas_v1alpha1_StoreFormatList(ref),
+		v1alpha1.UsageEntry{}.OpenAPIModelName():          schema_pkg_apis_solas_v1alpha1_UsageEntry(ref),
 		resource.Quantity{}.OpenAPIModelName():            schema_apimachinery_pkg_api_resource_Quantity(ref),
 		v1.APIGroup{}.OpenAPIModelName():                  schema_pkg_apis_meta_v1_APIGroup(ref),
 		v1.APIGroupList{}.OpenAPIModelName():              schema_pkg_apis_meta_v1_APIGroupList(ref),
@@ -87,6 +94,43 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		runtime.TypeMeta{}.OpenAPIModelName():             schema_k8sio_apimachinery_pkg_runtime_TypeMeta(ref),
 		runtime.Unknown{}.OpenAPIModelName():              schema_k8sio_apimachinery_pkg_runtime_Unknown(ref),
 		version.Info{}.OpenAPIModelName():                 schema_k8sio_apimachinery_pkg_version_Info(ref),
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_Bucket(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Bucket is a token bucket of one rate: binds or preemptions.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"tokens": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Tokens is the number of tokens left, in thousandths.",
+							Default:     0,
+							Type:        []string{"integer"},
+							Format:      "int64",
+						},
+					},
+					"last": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Last is when the bucket was last filled, by the server clock.",
+							Ref:         ref(v1.Time{}.OpenAPIModelName()),
+						},
+					},
+				},
+				Required: []string{"kind", "tokens", "last"},
+			},
+		},
+		Dependencies: []string{
+			v1.Time{}.OpenAPIModelName()},
 	}
 }
 
@@ -148,6 +192,13 @@ func schema_pkg_apis_solas_v1alpha1_ClaimRef(ref common.ReferenceCallback) commo
 						SchemaProps: spec.SchemaProps{
 							Description: "BoundAt is when the bind happened, by the binder's clock. For display only.",
 							Ref:         ref(v1.Time{}.OpenAPIModelName()),
+						},
+					},
+					"protected": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Protected means that the device can only be released, not preempted, spec 10.10.",
+							Type:        []string{"boolean"},
+							Format:      "",
 						},
 					},
 				},
@@ -473,6 +524,136 @@ func schema_pkg_apis_solas_v1alpha1_MemberList(ref common.ReferenceCallback) com
 	}
 }
 
+func schema_pkg_apis_solas_v1alpha1_MemberPolicy(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "MemberPolicy limits one member, spec 15.1. Its name is the cluster ID of the member. An operator writes it.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1.ObjectMeta{}.OpenAPIModelName()),
+						},
+					},
+					"spec": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1alpha1.MemberPolicySpec{}.OpenAPIModelName()),
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			v1alpha1.MemberPolicySpec{}.OpenAPIModelName(), v1.ObjectMeta{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_MemberPolicyList(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "MemberPolicyList is a list of member policies.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1.ListMeta{}.OpenAPIModelName()),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: ref(v1alpha1.MemberPolicy{}.OpenAPIModelName()),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			v1alpha1.MemberPolicy{}.OpenAPIModelName(), v1.ListMeta{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_MemberPolicySpec(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "MemberPolicySpec holds the limits of a member. A limit that is not set is no limit.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"maxDevices": {
+						SchemaProps: spec.SchemaProps{
+							Description: "MaxDevices is the most devices that the member may hold.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"bindsPerMinute": {
+						SchemaProps: spec.SchemaProps{
+							Description: "BindsPerMinute is the rate of binds of the member, spec 15.2.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"preemptionsPerMinute": {
+						SchemaProps: spec.SchemaProps{
+							Description: "PreemptionsPerMinute is the rate of preemption requests of the member.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"allowProtected": {
+						SchemaProps: spec.SchemaProps{
+							Description: "AllowProtected lets the member mark its claims as protected, so their devices cannot be preempted, spec 10.10.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func schema_pkg_apis_solas_v1alpha1_MemberSpec(ref common.ReferenceCallback) common.OpenAPIDefinition {
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
@@ -532,6 +713,124 @@ func schema_pkg_apis_solas_v1alpha1_MemberStatus(ref common.ReferenceCallback) c
 		},
 		Dependencies: []string{
 			v1.MicroTime{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_MemberUsage(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "MemberUsage is the usage set of a limited member, spec 15.2: the devices that it holds or is binding. The API does not serve it; the server writes it at the storage level. Its name is the member name.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1.ObjectMeta{}.OpenAPIModelName()),
+						},
+					},
+					"entries": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-type": "atomic",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: ref(v1alpha1.UsageEntry{}.OpenAPIModelName()),
+									},
+								},
+							},
+						},
+					},
+					"buckets": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-type": "atomic",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "Buckets are the token buckets of the rates, spec 15.2.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: ref(v1alpha1.Bucket{}.OpenAPIModelName()),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			v1alpha1.Bucket{}.OpenAPIModelName(), v1alpha1.UsageEntry{}.OpenAPIModelName(), v1.ObjectMeta{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_MemberUsageList(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "MemberUsageList is a list of usage sets.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1.ListMeta{}.OpenAPIModelName()),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: ref(v1alpha1.MemberUsage{}.OpenAPIModelName()),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			v1alpha1.MemberUsage{}.OpenAPIModelName(), v1.ListMeta{}.OpenAPIModelName()},
 	}
 }
 
@@ -695,6 +994,35 @@ func schema_pkg_apis_solas_v1alpha1_StoreFormatList(ref common.ReferenceCallback
 		},
 		Dependencies: []string{
 			v1alpha1.StoreFormat{}.OpenAPIModelName(), v1.ListMeta{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_UsageEntry(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "UsageEntry is one device in a usage set.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"device": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"added": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Added is when the server added the entry, by its own clock.",
+							Ref:         ref(v1.Time{}.OpenAPIModelName()),
+						},
+					},
+				},
+				Required: []string{"device", "added"},
+			},
+		},
+		Dependencies: []string{
+			v1.Time{}.OpenAPIModelName()},
 	}
 }
 

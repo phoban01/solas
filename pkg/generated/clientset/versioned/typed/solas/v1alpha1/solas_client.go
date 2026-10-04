@@ -16,6 +16,7 @@ type SolasV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	DevicesGetter
 	MembersGetter
+	MemberPoliciesGetter
 }
 
 // SolasV1alpha1Client is used to interact with features provided by the solas.dev group.
@@ -29,6 +30,10 @@ func (c *SolasV1alpha1Client) Devices() DeviceInterface {
 
 func (c *SolasV1alpha1Client) Members() MemberInterface {
 	return newMembers(c)
+}
+
+func (c *SolasV1alpha1Client) MemberPolicies() MemberPolicyInterface {
+	return newMemberPolicies(c)
 }
 
 // NewForConfig creates a new SolasV1alpha1Client for the given config.

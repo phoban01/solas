@@ -26,6 +26,7 @@ module adopt_any_uid {
     readGap: 15,
     reclaim: Map("d1" -> "Delete", "d2" -> "Delete"),
     reclaimDelay: 0,
+    protected: Set(),
   }).* from "../solas"
 
   // Random search does not reach this bug, so a test plays it step by step.

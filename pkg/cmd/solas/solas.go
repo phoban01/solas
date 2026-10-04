@@ -20,6 +20,7 @@ import (
 	"github.com/phoban01/solas/pkg/controller"
 	"github.com/phoban01/solas/pkg/format"
 	"github.com/phoban01/solas/pkg/migrate"
+	"github.com/phoban01/solas/pkg/registry/solas/usage"
 )
 
 // groupVersion is the API that the controller part reads through the
@@ -87,6 +88,7 @@ func (o *Options) Run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return prepared.RunWithContext(ctx) })
 	g.Go(func() error { return watchFormat(ctx, store) })
+	g.Go(func() error { return cleanUsage(ctx, store, o.Controller.ClusterID) })
 	g.Go(func() error {
 		if err := waitForAPI(ctx, restConfig); err != nil {
 			return err
@@ -160,6 +162,31 @@ func watchFormat(ctx context.Context, s *migrate.Store) error {
 		}
 		if err := checkFormat(ctx, s); err != nil && f > format.Max {
 			return err
+		}
+	}
+}
+
+// usagePoll is how often the server cleans the usage set of its member.
+const usagePoll = 30 * time.Second
+
+// cleanUsage removes the stale entries of the usage set of this member,
+// spec 15.3. Every replica may run it; each removal is conditional.
+func cleanUsage(ctx context.Context, s *migrate.Store, member string) error {
+	u := usage.New(s.Usages)
+	log := ctrl.Log.WithName("usage")
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(usagePoll):
+		}
+		removed, err := u.Cleanup(ctx, s.Devices, member, usage.DefaultGrace, time.Now())
+		if err != nil {
+			log.Info("cannot clean the usage set", "member", member, "err", err.Error())
+			continue
+		}
+		if len(removed) > 0 {
+			log.Info("removed stale usage entries", "member", member, "devices", removed)
 		}
 	}
 }

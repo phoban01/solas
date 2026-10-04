@@ -22,6 +22,10 @@ func (c *FakeSolasV1alpha1) Members() v1alpha1.MemberInterface {
 	return newFakeMembers(c)
 }
 
+func (c *FakeSolasV1alpha1) MemberPolicies() v1alpha1.MemberPolicyInterface {
+	return newFakeMemberPolicies(c)
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeSolasV1alpha1) RESTClient() rest.Interface {

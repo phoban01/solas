@@ -7,3 +7,5 @@ package v1alpha1
 type DeviceExpansion interface{}
 
 type MemberExpansion interface{}
+
+type MemberPolicyExpansion interface{}
