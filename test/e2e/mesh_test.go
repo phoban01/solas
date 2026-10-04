@@ -189,6 +189,58 @@ func TestMesh(t *testing.T) {
 			}
 			return ctx
 		}).
+		Assess("a/net hands nic-1 to a pre-bound claim in b", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+			apply(t, "b", "transfer-b.yaml")
+			waitPhase(t, clients["b"], "net", claimsv1alpha1.ClaimPending, 30*time.Second)
+			if h := holder(ctx, clients["a"], "nic-1"); h != "a/net/1" {
+				t.Fatalf("nic-1 holder before the transfer = %q, want a/net/1", h)
+			}
+			// Poll nic-1 during the transfer: it must never be free.
+			stop := make(chan struct{})
+			sawFree, sawOffer := make(chan bool, 1), make(chan bool, 1)
+			go func() {
+				free, offer := false, false
+				for {
+					select {
+					case <-stop:
+						sawFree <- free
+						sawOffer <- offer
+						return
+					case <-time.After(100 * time.Millisecond):
+					}
+					d := getDevice(ctx, clients["a"], "nic-1")
+					if d.Name != "" && d.Status.ClaimRef == nil {
+						free = true
+					}
+					if d.Status.Offer != nil && d.Status.Offer.Name == "net" && d.Status.Offer.Member == "b" {
+						offer = true
+					}
+				}
+			}()
+			uid := getClaim(ctx, clients["b"], "net").UID
+			run(t, "", "kubectl", "--kubeconfig", kubeconfig("a"), "-n", "work", "annotate", "deviceclaim", "net",
+				"solas.dev/transfer-to=b/work/net/"+string(uid))
+			waitPhase(t, clients["b"], "net", claimsv1alpha1.ClaimBound, 60*time.Second)
+			waitPhase(t, clients["a"], "net", claimsv1alpha1.ClaimPending, 30*time.Second)
+			close(stop)
+			if <-sawFree {
+				t.Error("nic-1 was free during the transfer")
+			}
+			if !<-sawOffer {
+				t.Log("the poll did not see the offer; b bound it within 100ms")
+			}
+			d := getDevice(ctx, clients["a"], "nic-1")
+			if h := holder(ctx, clients["a"], "nic-1"); h != "b/net/2" {
+				t.Errorf("nic-1 holder after the transfer = %q, want b/net/2", h)
+			}
+			if d.Status.Offer != nil || d.Status.LastRelease != nil {
+				t.Errorf("nic-1 after the transfer: offer %+v, lastRelease %+v; want none", d.Status.Offer, d.Status.LastRelease)
+			}
+			if got := getClaim(ctx, clients["b"], "net").Status.FencingToken; got != 2 {
+				t.Errorf("b/net token = %d, want 2", got)
+			}
+			return ctx
+		}).
 		Assess("a claim of higher priority preempts across clusters", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			victim = getClaim(ctx, clients["a"], "train").Status.DeviceName
 			apply(t, "b", "urgent.yaml")

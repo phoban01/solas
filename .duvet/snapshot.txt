@@ -160,6 +160,9 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: version `v1alpha1`.
     TEXT[!MUST,implementation]: The solas API server MUST serve `Device` from the table.
     TEXT[!MUST,implementation]: `Device` MUST have a `status` subresource.
+    TEXT[!MAY]: `spec.parameters` MAY hold any JSON that the owner of the device needs.
+    TEXT[!MUST,implementation,test]: The server MUST store `spec.parameters` as written, and MUST reject it
+    TEXT[!MUST,implementation,test]: when it is larger than 64 KiB.
 
   SECTION: [5.2. Claim reference](#5-2-claim-reference)
     TEXT[!MUST,implementation]: A `claimRef` MUST hold the member name, the member UID, the claim
@@ -261,8 +264,7 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: `Suspended` claim back to `Bound` if its device still names it.
     TEXT[!MUST,implementation,test]: When the controller finds that its member UID changed, it MUST set each
     TEXT[!MUST,implementation,test]: claim with the old `status.memberUID` to `Lost`.
-    TEXT[!MUST,implementation]: A `Lost` claim MUST NOT bind again,
-    TEXT[!MUST]:  except by a recovery, section 14.5.
+    TEXT[!MUST,implementation]: A `Lost` claim MUST NOT bind again, except by a recovery, section 14.5.
     TEXT[!MUST,implementation]: Workloads MUST use a device only while its claim is in effect.
 
   SECTION: [6.6. Device use](#6-6-device-use)
@@ -386,6 +388,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: The Device MUST get its description from a field of the old object that
     TEXT[!MUST,implementation]: the pivot names.
     TEXT[!MUST,implementation,test]: The pivot MUST NOT copy the status of the old object.
+    TEXT[!MUST,implementation,test]: The Device MUST get the whole `spec` of the old object in
+    TEXT[!MUST,implementation,test]: `spec.parameters`, so that no field of the old object is lost.
     TEXT[!MUST,implementation]: The Device MUST have the annotation `solas.dev/pivoted-from`, set to the
     TEXT[!MUST,implementation]: group, the resource, the namespace, and the name of the old object.
     TEXT[!MUST,implementation]: The old object MUST have the annotation `solas.dev/pivoted-to`, set to
@@ -405,6 +409,7 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: The verify MUST check that each old object has a Device.
     TEXT[!MUST,implementation,test]: It MUST check that the Device names the old object, and that the labels
     TEXT[!MUST,implementation,test]: and the description match.
+    TEXT[!MUST,implementation,test]: It MUST check that `spec.parameters` holds the `spec` of the old object.
     TEXT[!MUST,implementation]: It MUST exit with a status other than 0 when any check fails.
 
   SECTION: [9.4. Webhook](#9-4-webhook)
@@ -599,44 +604,49 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: `etcdutl snapshot restore --bump-revision` and `--mark-compacted`.
 
   SECTION: [14.1. Offer](#14-1-offer)
-    TEXT[!MUST]: Before it offers a device, the holder's controller MUST set its claim to
-    TEXT[!MUST]: `Transferring`.
-    TEXT[!MUST]: The offer MUST be a status update of the device that sets
-    TEXT[!MUST]: `status.offer` to the named claim, its member, and its member UID.
-    TEXT[!MUST]: The offer MUST carry the resource version that the controller read.
-    TEXT[!MUST]: The server MUST reject an offer while a preemption request stands, and a
-    TEXT[!MUST]: second offer while one stands.
+    TEXT[!MUST,implementation,test]: Before it offers a device, the holder's controller MUST set its claim to
+    TEXT[!MUST,implementation,test]: `Transferring`.
+    TEXT[!MUST,implementation]: The offer MUST be a status update of the device that sets
+    TEXT[!MUST,implementation]: `status.offer` to the named claim, its member, and its member UID.
+    TEXT[!MUST,implementation]: The offer MUST carry the resource version that the controller read.
+    TEXT[!MUST,implementation,test]: The server MUST reject an offer on a free device, and a second offer
+    TEXT[!MUST,implementation,test]: while one stands.
+    TEXT[!MUST,implementation,test]: The server MUST reject an offer while a preemption request stands.
+    TEXT[!MUST,implementation,test]: The server MUST reject a preemption request while an offer stands.
+    TEXT[!MUST,implementation,test]: When a status update clears `claimRef`, the server MUST clear
+    TEXT[!MUST,implementation,test]: `status.offer`.
 
   SECTION: [14.2. Bind against the offer](#14-2-bind-against-the-offer)
-    TEXT[!MAY]: Only the claim that the offer names, with the member UID that it names,
-    TEXT[!MAY]: MAY bind against the offer.
-    TEXT[!MUST]: The bind MUST be one status update that sets `claimRef` to the named
-    TEXT[!MUST]: claim, sets `status.fencingToken` to the next token, spec 5.3 and 13.2,
-    TEXT[!MUST]: and clears `status.offer`.
-    TEXT[!MUST]: When the old claim's controller sees that its device names another
-    TEXT[!MUST]: claim, it MUST stop treating the device as its own, and MUST NOT write to
-    TEXT[!MUST]: the device.
+    TEXT[!MAY,implementation,test]: Only the claim that the offer names, with the member UID that it names,
+    TEXT[!MAY,implementation,test]: MAY bind against the offer.
+    TEXT[!MUST,implementation,test]: The bind MUST be one status update that sets `claimRef` to the named
+    TEXT[!MUST,implementation,test]: claim, sets `status.fencingToken` to the next token, spec 5.3 and 13.2,
+    TEXT[!MUST,implementation,test]: and clears `status.offer`.
+    TEXT[!MUST,implementation,test]: When the old claim's controller sees that its device names another
+    TEXT[!MUST,implementation,test]: claim, it MUST stop treating the device as its own, and MUST NOT write to
+    TEXT[!MUST,implementation,test]: the device.
 
   SECTION: [14.3. Withdraw](#14-3-withdraw)
-    TEXT[!MAY]: The holder MAY withdraw an offer that nobody bound, with a status update
-    TEXT[!MAY]: that clears `status.offer`, and set its claim back to `Bound`.
-    TEXT[!MUST]: The sweeper MUST clear an offer whose member UID is not in the member
-    TEXT[!MUST]: list, as it does for a preemption request, spec 10.9.
+    TEXT[!MAY,implementation,test]: The holder MAY withdraw an offer that nobody bound, with a status update
+    TEXT[!MAY,implementation,test]: that clears `status.offer`, and set its claim back to `Bound`.
+    TEXT[!MUST,implementation,test]: The sweeper MUST clear an offer whose member UID is not in the member
+    TEXT[!MUST,implementation,test]: list, as it does for a preemption request, spec 10.9.
 
   SECTION: [14.4. Pre-bound claims](#14-4-pre-bound-claims)
     TEXT[!MAY]: A claim MAY name its device in `spec.deviceName`.
-    TEXT[!MUST]: A claim that names a device MUST bind only that device: against an offer
-    TEXT[!MUST]: that names the claim, or as a normal bind when the device is free.
+    TEXT[!MUST,implementation,test]: A claim that names a device MUST bind only that device: against an offer
+    TEXT[!MUST,implementation,test]: that names the claim, or as a normal bind when the device is free.
 
   SECTION: [14.5. Recovery of a Lost claim](#14-5-recovery-of-a-lost-claim)
-    TEXT[!MAY]: A member that joined again with a new UID MAY recover a device whose
-    TEXT[!MAY]: `claimRef` names one of its `Lost` claims under an old member UID,
-    TEXT[!MAY]: ADR 0020.
-    TEXT[!MUST]: A recovery MUST be one status update that sets the `claimRef` to the
-    TEXT[!MUST]: member's current UID and raises `status.fencingToken`, spec 5.3 and 13.2.
-    TEXT[!MUST]: The server MUST reject a recovery unless the member name and the claim
-    TEXT[!MUST]: UID are the same, and no `Member` has the old member UID.
-    TEXT[!MUST]: After a recovery, the controller MUST set the claim back to `Bound`.
+    TEXT[!MAY,implementation]: A member that joined again with a new UID MAY recover a device whose
+    TEXT[!MAY,implementation]: `claimRef` names one of its `Lost` claims under an old member UID,
+    TEXT[!MAY,implementation]: ADR 0020.
+    TEXT[!MUST,implementation,test]: A recovery MUST be one status update that sets the `claimRef` to the
+    TEXT[!MUST,implementation,test]: member's current UID and raises `status.fencingToken`, spec 5.3 and 13.2.
+    TEXT[!MUST,implementation]: A recovery MUST clear `status.offer`, because the old identity made it.
+    TEXT[!MUST,implementation,test]: The server MUST reject a recovery unless the member name and the claim
+    TEXT[!MUST,implementation,test]: UID are the same, and no `Member` has the old member UID.
+    TEXT[!MUST,implementation,test]: After a recovery, the controller MUST set the claim back to `Bound`.
     TEXT[!MUST]: A plain adopt MUST NOT take such a device, spec 6.3.
 
   SECTION: [15. Limits](#15-limits)

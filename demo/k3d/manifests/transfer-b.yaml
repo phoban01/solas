@@ -1,0 +1,9 @@
+# A pre-bound claim in cluster b. It names nic-1, which a/net holds, so
+# it binds only when a/net offers nic-1 to it.
+apiVersion: claims.solas.dev/v1alpha1
+kind: DeviceClaim
+metadata:
+  name: net
+  namespace: work
+spec:
+  deviceName: nic-1

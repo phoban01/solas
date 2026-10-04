@@ -851,6 +851,8 @@ module solas {
       // A protected holder can only release its device, spec 10.10.
       not(CFG.protected.contains(refClaim(dv.ref))),
       refPrio(dv.preempt) < p,
+      // No request while an offer stands, spec 14.1.
+      isFree(dv.offer),
       s' = {
         ...s,
         devices: s.devices.set(d, {
@@ -1037,12 +1039,27 @@ module solas {
       active(s.clusters.get(CFG.owner.get(k))),
       cm.phase == "Transferring",
       namesWith(dv.ref, k, cm.muid),
+      not(isFree(dv.offer)),
       s' = {
         ...s,
         devices: s.devices.set(cm.dev, { ...dv, rv: rv, offer: Free }),
         devCounter: rv,
         claims: s.claims.set(k, { ...cm, phase: "Bound" }),
       },
+    }
+  }
+
+  // The holder stops a transfer before it offered the device. There is no
+  // offer, so it writes nothing to the device.
+  action cancelTransfer(k: str): bool = {
+    val cm = s.claims.get(k)
+    val dv = s.devices.get(cm.dev)
+    all {
+      active(s.clusters.get(CFG.owner.get(k))),
+      cm.phase == "Transferring",
+      namesWith(dv.ref, k, cm.muid),
+      isFree(dv.offer),
+      s' = { ...s, claims: s.claims.set(k, { ...cm, phase: "Bound" }) },
     }
   }
 
@@ -1241,8 +1258,7 @@ module solas {
     },
   }
 
-  // The transfer of spec 14. The model-based tests replay baseStep only,
-  // until the server has the transfer.
+  // The transfer of spec 14 and the recovery of spec 14.5.
   action transferStep = {
     nondet c = CFG.clusters.oneOf()
     nondet d = CFG.devices.oneOf()
@@ -1253,6 +1269,7 @@ module solas {
       offer(k, t),
       bindOffer(k, d),
       withdrawOffer(k),
+      cancelTransfer(k),
       transferDone(k),
       sweepClearOffer(c, d),
       recoverWrite(k, d),
@@ -1285,6 +1302,10 @@ module solas {
       renewLand(c),
     },
   }
+
+  // A calm step with the transfer actions, so that the model-based tests
+  // reach a bind against an offer.
+  action calmTransferStep = any { calmStep, transferStep }
 }
 
 // Two clusters, two devices, and three claims. The clocks start far

@@ -3,6 +3,8 @@ package pivot
 import (
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -71,5 +73,30 @@ func TestParseSource(t *testing.T) {
 	s, err := ParseSource("/v1/devices", "")
 	if err != nil || s.Resource.Group != "" || len(s.DescriptionPath) != 0 {
 		t.Errorf("core group: %+v, %v", s, err)
+	}
+}
+
+//= spec/solas.md#9-1-mapping
+//= type=test
+//# The Device MUST get the whole `spec` of the old object in
+//# `spec.parameters`, so that no field of the old object is lost.
+
+func TestToDeviceParameters(t *testing.T) {
+	o := oldDevice("gpu-1", "u1", "an A100")
+	o.Object["spec"].(map[string]any)["rack"] = map[string]any{"row": int64(3), "slot": "b"}
+	d, err := ToDevice(o, testSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"description":"an A100","rack":{"row":3,"slot":"b"}}`
+	if d.Spec.Parameters == nil || string(d.Spec.Parameters.Raw) != want {
+		t.Fatalf("parameters = %v, want %s", d.Spec.Parameters, want)
+	}
+	spaced := &runtime.RawExtension{Raw: []byte(`{ "rack": {"slot":"b", "row":3}, "description":"an A100" }`)}
+	if !SameParameters(d.Spec.Parameters, spaced) {
+		t.Error("SameParameters is false for the same JSON in another order")
+	}
+	if SameParameters(d.Spec.Parameters, &runtime.RawExtension{Raw: []byte(`{"description":"an A100"}`)}) {
+		t.Error("SameParameters is true for different JSON")
 	}
 }

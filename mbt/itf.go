@@ -42,6 +42,9 @@ type Device struct {
 	// Preempt is the preemption request, when Requested is true.
 	Requested bool
 	Preempt   Ref
+	// Offer is the transfer offer, when Offered is true.
+	Offered bool
+	Offer   Ref
 }
 
 // Ref is a model claimRef.
@@ -144,6 +147,10 @@ func decodeState(s map[string]any) (State, error) {
 		if tag, val := variant(d["preempt"]); tag == "Held" {
 			dev.Requested = true
 			dev.Preempt = decodeRef(val.(map[string]any))
+		}
+		if tag, val := variant(d["offer"]); tag == "Held" {
+			dev.Offered = true
+			dev.Offer = decodeRef(val.(map[string]any))
 		}
 		st.Devices[name] = dev
 	}

@@ -3,11 +3,14 @@
 package pivot
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	solasv1alpha1 "github.com/phoban01/solas/pkg/apis/solas/v1alpha1"
@@ -93,8 +96,39 @@ func ToDevice(old *unstructured.Unstructured, src Source) (*solasv1alpha1.Device
 		}
 	}
 	//= spec/solas.md#9-1-mapping
+	//# The Device MUST get the whole `spec` of the old object in
+	//# `spec.parameters`, so that no field of the old object is lost.
+	spec, found, err := unstructured.NestedMap(old.Object, "spec")
+	if err != nil {
+		return nil, fmt.Errorf("%s: field spec: %w", old.GetName(), err)
+	}
+	if found {
+		raw, err := json.Marshal(spec)
+		if err != nil {
+			return nil, fmt.Errorf("%s: field spec: %w", old.GetName(), err)
+		}
+		d.Spec.Parameters = &runtime.RawExtension{Raw: raw}
+	}
+	//= spec/solas.md#9-1-mapping
 	//# The pivot MUST NOT copy the status of the old object.
 	return d, nil
+}
+
+// SameParameters reports whether two parameters hold the same JSON. The
+// server may store the bytes with other spacing or key order.
+func SameParameters(a, b *runtime.RawExtension) bool {
+	norm := func(r *runtime.RawExtension) []byte {
+		if r == nil || len(r.Raw) == 0 {
+			return nil
+		}
+		var v any
+		if err := json.Unmarshal(r.Raw, &v); err != nil {
+			return r.Raw
+		}
+		out, _ := json.Marshal(v)
+		return out
+	}
+	return bytes.Equal(norm(a), norm(b))
 }
 
 func copyMap(m map[string]string) map[string]string {

@@ -2,11 +2,15 @@ package apiserver_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
 
@@ -57,7 +61,16 @@ func TestEtcdRESTOptions(t *testing.T) {
 		t.Fatalf("update with a stale resource version: err = %v, want 409 Conflict", err)
 	}
 
-	list, err := r.List(ctx, &metainternalversion.ListOptions{})
+	// The watch cache can still be starting. A list then fails with
+	// "storage is (re)initializing", and a client retries.
+	var list runtime.Object
+	err = wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		list, err = r.List(ctx, &metainternalversion.ListOptions{})
+		if err != nil && strings.Contains(err.Error(), "storage is (re)initializing") {
+			return false, nil
+		}
+		return true, err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

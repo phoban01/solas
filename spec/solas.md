@@ -293,6 +293,11 @@ The solas API server MUST serve `Device` from the table.
 `Device` MUST have a `status` subresource.
 Claims select devices by their labels.
 `Device.spec.description` holds free text that describes the device.
+`spec.parameters` MAY hold any JSON that the owner of the device needs.
+The server MUST store `spec.parameters` as written, and MUST reject it
+when it is larger than 64 KiB.
+The server never reads inside it, so its shape can change without a
+release of solas.
 
 ### 5.2. Claim reference
 
@@ -669,6 +674,8 @@ The Device MUST get the annotations of the old object, except
 The Device MUST get its description from a field of the old object that
 the pivot names.
 The pivot MUST NOT copy the status of the old object.
+The Device MUST get the whole `spec` of the old object in
+`spec.parameters`, so that no field of the old object is lost.
 A pivoted device starts free.
 The Device MUST have the annotation `solas.dev/pivoted-from`, set to the
 group, the resource, the namespace, and the name of the old object.
@@ -693,6 +700,7 @@ With `--dry-run`, the copy MUST NOT write.
 The verify MUST check that each old object has a Device.
 It MUST check that the Device names the old object, and that the labels
 and the description match.
+It MUST check that `spec.parameters` holds the `spec` of the old object.
 It MUST exit with a status other than 0 when any check fails.
 
 ### 9.4. Webhook
@@ -971,6 +979,11 @@ A holder can hand its device to a named claim, ADR 0019.
 
 ### 14.1. Offer
 
+A user starts a transfer with the annotation `solas.dev/transfer-to` on
+the claim, set to the member, the namespace, the name, and the UID of the
+target claim, separated by `/`.
+The UID is in the value because the holder cannot read a claim in another
+cluster.
 Before it offers a device, the holder's controller MUST set its claim to
 `Transferring`.
 A `Transferring` claim is not in effect, so its workload stops before
@@ -978,8 +991,12 @@ the offer exists.
 The offer MUST be a status update of the device that sets
 `status.offer` to the named claim, its member, and its member UID.
 The offer MUST carry the resource version that the controller read.
-The server MUST reject an offer while a preemption request stands, and a
-second offer while one stands.
+The server MUST reject an offer on a free device, and a second offer
+while one stands.
+The server MUST reject an offer while a preemption request stands.
+The server MUST reject a preemption request while an offer stands.
+When a status update clears `claimRef`, the server MUST clear
+`status.offer`.
 
 ### 14.2. Bind against the offer
 
@@ -1015,6 +1032,7 @@ A member that joined again with a new UID MAY recover a device whose
 ADR 0020.
 A recovery MUST be one status update that sets the `claimRef` to the
 member's current UID and raises `status.fencingToken`, spec 5.3 and 13.2.
+A recovery MUST clear `status.offer`, because the old identity made it.
 The server MUST reject a recovery unless the member name and the claim
 UID are the same, and no `Member` has the old member UID.
 After a recovery, the controller MUST set the claim back to `Bound`.

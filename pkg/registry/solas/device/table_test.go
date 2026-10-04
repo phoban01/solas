@@ -17,6 +17,7 @@ func TestTableColumns(t *testing.T) {
 	held.Status.FencingToken = 3
 	held.Status.Preemption = &solas.PreemptionRequest{Claim: solas.ClaimRef{Member: "b", Namespace: "work", Name: "urgent", Priority: 5}}
 	held.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue}}
+	held.Status.Offer = &solas.ClaimRef{Member: "c", Namespace: "work", Name: "job"}
 
 	table, err := tableConvertor{}.ConvertToTable(context.Background(), &solas.DeviceList{Items: []solas.Device{*free, *held}}, nil)
 	if err != nil {
@@ -34,14 +35,14 @@ func TestTableColumns(t *testing.T) {
 	if want := []string{"Name", "Ready", "Member", "Claim", "Age"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("default columns = %v, want %v", names, want)
 	}
-	if want := []string{"Preemptible", "Preemption", "Reclaim"}; !reflect.DeepEqual(wide, want) {
+	if want := []string{"Preemptible", "Preemption", "Offer", "Reclaim"}; !reflect.DeepEqual(wide, want) {
 		t.Errorf("wide columns = %v, want %v", wide, want)
 	}
-	cells := func(i int) []any { c := table.Rows[i].Cells; return []any{c[0], c[1], c[2], c[3], c[5], c[6]} }
-	if got, want := cells(0), []any{"d0", "Unknown", "<none>", "<none>", false, "<none>"}; !reflect.DeepEqual(got, want) {
+	cells := func(i int) []any { c := table.Rows[i].Cells; return []any{c[0], c[1], c[2], c[3], c[5], c[6], c[7]} }
+	if got, want := cells(0), []any{"d0", "Unknown", "<none>", "<none>", false, "<none>", "<none>"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("free row = %v, want %v", got, want)
 	}
-	if got, want := cells(1), []any{"d1", "True", "a", "work/train", true, "b/work/urgent"}; !reflect.DeepEqual(got, want) {
+	if got, want := cells(1), []any{"d1", "True", "a", "work/train", true, "b/work/urgent", "c/work/job"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("held row = %v, want %v", got, want)
 	}
 }

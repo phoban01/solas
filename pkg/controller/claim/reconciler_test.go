@@ -313,7 +313,10 @@ func TestSuspendAndResume(t *testing.T) {
 
 func TestNewMemberUIDMakesClaimsLost(t *testing.T) {
 	c1 := claim("c1", "u1")
-	k := fakekube.NewClient(device("d1", nil, nil), c1)
+	// The Member still has the old UID, so the Lost claim cannot recover
+	// its device, spec 14.5.
+	k := fakekube.NewClient(device("d1", nil, nil), c1,
+		&solasv1alpha1.Member{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", UID: muid}})
 	m := live()
 	r := newReconciler(k, m)
 	settle(t, r, c1)

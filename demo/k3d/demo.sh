@@ -103,7 +103,47 @@ show a get devices
 say "infer wants a Ready GPU with at most 16 GiB: gpu-t4-2 is not Ready, so it got gpu-t4-1."
 say "net wants a 400G NIC, so nic-2 stays free. Nothing asked for gpu-h100-1."
 
-scene "3. A claim of priority 5 in b preempts a claim of priority 1 in a"
+scene "3. a/net hands nic-1 to a pre-bound claim in b"
+k b apply -f "$manifests/transfer-b.yaml" >/dev/null
+wait_for 30 "b/net Pending" is_phase b net Pending
+show b get deviceclaims -n work net -o custom-columns=NAME:.metadata.name,DEVICE:.spec.deviceName,PHASE:.status.phase
+say "b/net names nic-1. nic-1 is held by a/net, so b/net waits for an offer."
+# Record every version of nic-1 during the transfer.
+watch_log=$(mktemp)
+timeout 120 env KUBECONFIG="$root/demo/k3d/.kube/a" kubectl get device nic-1 -w \
+  -o jsonpath='{.status.claimRef.member}/{.status.claimRef.name} token={.status.fencingToken} offer={.status.offer.member}/{.status.offer.name}{"\n"}' >"$watch_log" 2>/dev/null &
+watch_pid=$!
+target_uid=$(k b -n work get deviceclaim net -o jsonpath='{.metadata.uid}')
+k a -n work annotate deviceclaim net "solas.dev/transfer-to=b/work/net/$target_uid" >/dev/null
+say "annotated a/net with solas.dev/transfer-to=b/work/net/<uid of b/net>"
+has_offer() { [ -n "$(k a get device nic-1 -o jsonpath='{.status.offer.member}')" ]; }
+for _ in $(seq 10); do
+  if has_offer; then
+    show a get devices nic-1 -o wide
+    say "a/net is Transferring: its workload stops, and nic-1 shows the offer to b/net."
+    break
+  fi
+  sleep 1
+done
+wait_for 60 "b/net Bound" is_phase b net Bound
+wait_for 30 "a/net Pending" is_phase a net Pending
+[ "$(holder nic-1)" = b/net/2 ] || fail "nic-1 holder is $(holder nic-1), want b/net/2"
+[ -z "$(k a get device nic-1 -o jsonpath='{.status.lastRelease}')" ] || fail "nic-1 has a release record"
+sleep 2
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+say "every version of nic-1 during the transfer:"
+uniq "$watch_log" | sed 's/^/    /'
+if grep -q '^/ ' "$watch_log"; then
+  fail "nic-1 was free during the transfer"
+fi
+rm -f "$watch_log"
+show b get deviceclaims -n work net
+show a get deviceclaims -n work net
+say "b/net holds nic-1 with token 2. nic-1 was never free, and has no release record."
+say "a/net is Pending again: no other NIC has 400G, so it waits."
+
+scene "4. A claim of priority 5 in b preempts a claim of priority 1 in a"
 k b apply -f "$manifests/urgent.yaml" >/dev/null
 victim=$(device_of a train)
 wait_for 30 "a/train Preempting" is_phase a train Preempting
@@ -117,7 +157,7 @@ show b get deviceclaims -n work urgent
 show a get deviceclaims -n work train
 say "a/train waits. It may not preempt b/render, which has a higher priority."
 
-scene "4. Claims in a and b race for gpu-h100-1; one wins"
+scene "5. Claims in a and b race for gpu-h100-1; one wins"
 docker rm -f solas-device-gpu-h100-1 >/dev/null 2>&1 || true
 docker run -d --name solas-device-gpu-h100-1 --network solas-mesh solas-demo:dev device >/dev/null
 device_url="http://$(docker inspect -f '{{(index .NetworkSettings.Networks "solas-mesh").IPAddress}}' solas-device-gpu-h100-1):9000"
@@ -144,7 +184,7 @@ wait_for 30 "the workload in $winner uses gpu-h100-1" uses_by "$winner" 1 true
 show a get devices gpu-h100-1
 say "$winner won with token 1 and its workload uses the device. $loser/job waits."
 
-scene "5. $winner freezes past its lease; $loser takes over; fencing stops $winner"
+scene "6. $winner freezes past its lease; $loser takes over; fencing stops $winner"
 old_uid=$(k "$winner" get member "$winner" -o jsonpath='{.metadata.uid}')
 docker pause "k3d-e2e-$winner-server-0" >/dev/null
 say "paused cluster $winner; its lease is 10s"
@@ -158,7 +198,7 @@ say "unpaused $winner; its workload still thinks it holds token 1"
 wait_for 60 "the device rejects $winner's stale token" uses_by "$winner" 1 false
 say "the device REJECTED $winner's use with token 1, because it saw token 2"
 
-scene "6. $winner joins again with a new member UID; its old claims are Lost"
+scene "7. $winner joins again with a new member UID; its old claims are Lost"
 new_uid() {
   local uid
   uid=$(k "$winner" get member "$winner" -o jsonpath='{.metadata.uid}')
@@ -173,7 +213,7 @@ case $store in
 dynamodb) other=etcd ;;
 etcd) other=dynamodb ;;
 esac
-scene "7. Move the mesh from $store to $other: one setting"
+scene "8. Move the mesh from $store to $other: one setting"
 # holders prints name=member/claim/token for every device.
 holders() { k a get devices -o jsonpath='{range .items[*]}{.metadata.name}={.status.claimRef.member}/{.status.claimRef.name}/{.status.fencingToken} {end}'; }
 before=$(holders)

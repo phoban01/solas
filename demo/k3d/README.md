@@ -39,19 +39,20 @@ every 3 seconds, so each scene takes seconds, not minutes.
 |-------|--------------|------|
 | 1 | Eight devices are created in cluster `a` and appear in cluster `b`. Each has labels and attributes. The demo sets a `Ready` condition on each; `gpu-t4-2` reports `Ready=False`. | 2, 4, 10.1 |
 | 2 | Cluster `a` claims an A100, a small GPU, and a 400G NIC. Cluster `b` claims an A100 and the FPGA. CEL picks by attribute and by condition, so `infer` skips `gpu-t4-2`. Three devices stay free. | 6.3, 10.3 |
-| 3 | `urgent` in `b` has priority 5 and wants an A100. Both are taken, so it asks for the one that `a/train` holds at priority 1. `train` becomes `Preempting`, keeps the device for its 10 second grace period, then lets it go and goes back to `Pending`. `urgent` binds with token 2. | 10.5 to 10.7 |
-| 4 | Claims `job` in `a` and in `b` race for `gpu-h100-1`. One wins with token 1. The other stays `Pending`. | 5.3, 6.3 |
-| 5 | The winner's node is paused for longer than its lease. The other cluster's sweeper deletes the winner's `Member` and frees its devices. The other `job` binds the H100 with token 2. When the winner wakes up, its workload still believes it holds the device and uses token 1. The device rejects it. | 6.6, 8 |
-| 6 | The winner's controller finds its `Member` gone. It joins again with a new UID, and its old claims become `Lost`. | 6.5, 7.2 |
-| 7 | The mesh moves to the other store with one setting. `solas migrate` seals dynamodb-local, copies every `Device` and `Member` to etcd, and verifies the copy. A write to the sealed store fails. Then each cluster gets the new `url` in the Secret `solas-storage`, and solas restarts. Every holder and fencing token is the same, and a new claim binds on etcd. [docs/migrate.md](../../docs/migrate.md) has the steps for a real mesh. | 12 |
+| 3 | `b/net` names `nic-1`, which `a/net` holds. `a/net` gets the annotation `solas.dev/transfer-to` and becomes `Transferring`. Its controller offers `nic-1` to `b/net`, and `-o wide` shows the offer. `b/net` binds against the offer with token 2. A watch shows that `nic-1` is never free, and it has no release record. `a/net` goes back to `Pending`. | 14 |
+| 4 | `urgent` in `b` has priority 5 and wants an A100. Both are taken, so it asks for the one that `a/train` holds at priority 1. `train` becomes `Preempting`, keeps the device for its 10 second grace period, then lets it go and goes back to `Pending`. `urgent` binds with token 2. | 10.5 to 10.7 |
+| 5 | Claims `job` in `a` and in `b` race for `gpu-h100-1`. One wins with token 1. The other stays `Pending`. | 5.3, 6.3 |
+| 6 | The winner's node is paused for longer than its lease. The other cluster's sweeper deletes the winner's `Member` and frees its devices. The other `job` binds the H100 with token 2. When the winner wakes up, its workload still believes it holds the device and uses token 1. The device rejects it. | 6.6, 8 |
+| 7 | The winner's controller finds its `Member` gone. It joins again with a new UID, and its old claims become `Lost`. | 6.5, 7.2 |
+| 8 | The mesh moves to the other store with one setting. `solas migrate` seals dynamodb-local, copies every `Device` and `Member` to etcd, and verifies the copy. A write to the sealed store fails. Then each cluster gets the new `url` in the Secret `solas-storage`, and solas restarts. Every holder and fencing token is the same, and a new claim binds on etcd. [docs/migrate.md](../../docs/migrate.md) has the steps for a real mesh. | 12 |
 
 `kubectl get devices` shows whether each device is ready, and the member
-and claim that hold it. `-o wide` adds whether it is preemptible, and
-any preemption request. `kubectl get deviceclaims` shows the phase, the
-device, and when the member's lease ends. The fencing token and the
+and claim that hold it. `-o wide` adds whether it is preemptible, any
+preemption request, and any transfer offer. `kubectl get deviceclaims`
+shows the phase, the device, and when the member's lease ends. The fencing token and the
 priority are in the objects: `-o yaml` shows them.
 
-Scene 5 is the reason for fencing tokens (ADR 0008). The paused workload
+Scene 6 is the reason for fencing tokens (ADR 0008). The paused workload
 acts on an old view, and no clock check can stop it. The device sees the
 higher token first, so it rejects the lower one.
 
@@ -61,6 +62,8 @@ higher token first, so it rejects the lower one.
 - `manifests/claims-a.yaml`, `manifests/claims-b.yaml`: the claims of
   each cluster, with label and CEL selectors and priorities.
 - `manifests/urgent.yaml`: the claim that preempts.
+- `manifests/transfer-b.yaml`: the pre-bound claim in `b` that takes
+  `nic-1` in a transfer.
 - `manifests/claim.yaml`: the `job` claim for the H100, and a workload
   that uses the device with the claim's token.
 - `cmd/solas-demo`: the device gatekeeper (`device`) and the workload

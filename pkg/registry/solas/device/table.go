@@ -27,6 +27,7 @@ var columns = []metav1.TableColumnDefinition{
 	{Name: "Age", Type: "string"},
 	{Name: "Preemptible", Type: "boolean", Priority: 1},
 	{Name: "Preemption", Type: "string", Priority: 1, Description: "member/namespace/name of the claim that asks for the device"},
+	{Name: "Offer", Type: "string", Priority: 1, Description: "member/namespace/name of the claim that the holder offers the device to, spec 14"},
 	{Name: "Reclaim", Type: "string", Priority: 1, Description: "reclaim policy, spec 8.5"},
 }
 
@@ -52,13 +53,17 @@ func (tableConvertor) ConvertToTable(_ context.Context, obj runtime.Object, _ ru
 		if p := d.Status.Preemption; p != nil {
 			preemption = p.Claim.Member + "/" + p.Claim.Namespace + "/" + p.Claim.Name
 		}
+		offer := none
+		if o := d.Status.Offer; o != nil {
+			offer = o.Member + "/" + o.Namespace + "/" + o.Name
+		}
 		ready := "Unknown"
 		if c := meta.FindStatusCondition(d.Status.Conditions, "Ready"); c != nil {
 			ready = string(c.Status)
 		}
 		table.Rows = append(table.Rows, metav1.TableRow{
 			Cells: []any{d.Name, ready, member, claim,
-				duration.HumanDuration(metav1.Now().Sub(d.CreationTimestamp.Time)), d.Spec.Preemptible, preemption, reclaimPolicy(d)},
+				duration.HumanDuration(metav1.Now().Sub(d.CreationTimestamp.Time)), d.Spec.Preemptible, preemption, offer, reclaimPolicy(d)},
 			Object: runtime.RawExtension{Object: d},
 		})
 	}

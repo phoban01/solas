@@ -234,6 +234,34 @@ func TestClearStaleRequests(t *testing.T) {
 	}
 }
 
+//= spec/solas.md#14-3-withdraw
+//= type=test
+//# The sweeper MUST clear an offer whose member UID is not in the member
+//# list, as it does for a preemption request, spec 10.9.
+
+func TestClearStaleOffers(t *testing.T) {
+	ctx := context.Background()
+	gone := device("d1", ref("a", "ua"))
+	gone.Status.Offer = ref("b", "ub-gone")
+	kept := device("d2", ref("a", "ua"))
+	kept.Status.Offer = ref("a", "ua")
+	kept.Status.Offer.Name, kept.Status.Offer.UID = "other", "other-uid"
+	c := fakekube.NewClient(member("a", "ua"), gone, kept)
+	s := newSweeper(c, clocktesting.NewFakePassiveClock(time.Unix(5000, 0)))
+	if err := s.clearStale(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for name, wantOffer := range map[string]bool{"d1": false, "d2": true} {
+		var d solasv1alpha1.Device
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, &d); err != nil {
+			t.Fatal(err)
+		}
+		if (d.Status.Offer != nil) != wantOffer || d.Status.ClaimRef == nil {
+			t.Errorf("%s: offer %+v, holder %+v; want offer %v and the holder kept", name, d.Status.Offer, d.Status.ClaimRef, wantOffer)
+		}
+	}
+}
+
 // advance moves the clock by d in steps of at most the sweep interval, and
 // runs the sweeper after each step, as Start does.
 func advance(t *testing.T, s *Sweeper, clk *clocktesting.FakePassiveClock, d time.Duration) {

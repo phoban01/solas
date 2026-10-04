@@ -70,11 +70,21 @@ func (c CompletedConfig) New() (*Server, error) {
 		}
 		opts.Usage = usage.New(raw)
 	}
-	devices, deviceStatus, err := device.NewRESTWithOptions(Scheme, getter, opts)
+	members, memberStatus, err := member.NewREST(Scheme, getter)
 	if err != nil {
 		return nil, err
 	}
-	members, memberStatus, err := member.NewREST(Scheme, getter)
+	opts.Members = func(ctx context.Context, name string) (*solas.Member, error) {
+		obj, err := members.Get(ctx, name, &metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return obj.(*solas.Member), nil
+	}
+	devices, deviceStatus, err := device.NewRESTWithOptions(Scheme, getter, opts)
 	if err != nil {
 		return nil, err
 	}

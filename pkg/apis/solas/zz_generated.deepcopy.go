@@ -120,6 +120,11 @@ func (in *DeviceSpec) DeepCopyInto(out *DeviceSpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.Parameters != nil {
+		in, out := &in.Parameters, &out.Parameters
+		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.PreemptionGracePeriodSeconds != nil {
 		in, out := &in.PreemptionGracePeriodSeconds, &out.PreemptionGracePeriodSeconds
 		*out = new(int32)
@@ -154,6 +159,11 @@ func (in *DeviceStatus) DeepCopyInto(out *DeviceStatus) {
 	if in.Preemption != nil {
 		in, out := &in.Preemption, &out.Preemption
 		*out = new(PreemptionRequest)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Offer != nil {
+		in, out := &in.Offer, &out.Offer
+		*out = new(ClaimRef)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.Conditions != nil {

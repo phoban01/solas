@@ -175,9 +175,19 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 	//# list, as it does for a `claimRef`, spec 8.3.
 	for i := range devices.Items {
 		d := &devices.Items[i]
-		if req := d.Status.Preemption; req != nil && !live[req.Claim.MemberUID] {
+		//= spec/solas.md#14-3-withdraw
+		//# The sweeper MUST clear an offer whose member UID is not in the member
+		//# list, as it does for a preemption request, spec 10.9.
+		staleReq := d.Status.Preemption != nil && !live[d.Status.Preemption.Claim.MemberUID]
+		staleOffer := d.Status.Offer != nil && !live[d.Status.Offer.MemberUID]
+		if staleReq || staleOffer {
 			cleared := d.DeepCopy()
-			cleared.Status.Preemption = nil
+			if staleReq {
+				cleared.Status.Preemption = nil
+			}
+			if staleOffer {
+				cleared.Status.Offer = nil
+			}
 			if err := s.Client.Status().Update(ctx, cleared); err == nil {
 				*d = *cleared
 			} else if !apierrors.IsConflict(err) && !apierrors.IsNotFound(err) {

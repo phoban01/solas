@@ -23,6 +23,9 @@ const (
 	ClaimPreempting ClaimPhase = "Preempting"
 	// Preempted: the grace period ended and the claim gives up the device.
 	ClaimPreempted ClaimPhase = "Preempted"
+	// Transferring: the holder hands the device to a named claim. The claim
+	// is not in effect, spec 14.1.
+	ClaimTransferring ClaimPhase = "Transferring"
 )
 
 // ReleaseFinalizer keeps a claim until its device is released, spec 6.3.
@@ -64,6 +67,9 @@ type DeviceClaimSpec struct {
 	// The member needs allowProtected in its MemberPolicy, spec 10.10.
 	// +optional
 	Protected bool `json:"protected,omitempty"`
+	// DeviceName names the one device that the claim binds, spec 14.4.
+	// +optional
+	DeviceName string `json:"deviceName,omitempty"`
 }
 
 // DeviceSelector matches devices. Both parts must match, spec 10.3.
@@ -78,7 +84,8 @@ type DeviceSelector struct {
 
 // DeviceClaimStatus shows the binding of the claim.
 type DeviceClaimStatus struct {
-	// Phase is Pending, Bound, Preempting, Preempted, Suspended, or Lost.
+	// Phase is Pending, Bound, Preempting, Preempted, Transferring,
+	// Suspended, or Lost.
 	// +optional
 	Phase ClaimPhase `json:"phase,omitempty"`
 	// DeviceName names the bound device.

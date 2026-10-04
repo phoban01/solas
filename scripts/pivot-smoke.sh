@@ -60,6 +60,8 @@ pivot copy
 pivot verify
 kubectl get devices.solas.dev
 test "$(desc gpu-old-1)" = "an A100 kept in etcd"
+params=$(kubectl get devices.solas.dev gpu-old-1 -o jsonpath='{.spec.parameters.description}')
+test "$params" = "an A100 kept in etcd"
 test "$(kubectl get devices.inventory.example.com gpu-old-1 -o jsonpath='{.metadata.annotations.solas\.dev/pivoted-to}')" = solas.dev/devices/gpu-old-1
 pivot copy | grep -q 'unchanged 2'
 

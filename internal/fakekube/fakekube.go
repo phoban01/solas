@@ -92,7 +92,15 @@ func deviceStatus(ctx context.Context, c client.Client, d *solasv1alpha1.Device,
 	if err := apiserver.Scheme.Convert(&old, &oldIn, nil); err != nil {
 		return err
 	}
-	strategy := device.NewStatusStrategy(device.NewStrategy(apiserver.Scheme))
+	strategy := device.NewStatusStrategy(device.NewStrategy(apiserver.Scheme)).WithMembers(
+		func(ctx context.Context, name string) (*solas.Member, error) {
+			var m solasv1alpha1.Member
+			if err := c.Get(ctx, client.ObjectKey{Name: name}, &m); err != nil {
+				return nil, client.IgnoreNotFound(err)
+			}
+			var out solas.Member
+			return &out, apiserver.Scheme.Convert(&m, &out, nil)
+		})
 	strategy.PrepareForUpdate(ctx, &in, &oldIn)
 	if errs := strategy.ValidateUpdate(ctx, &in, &oldIn); len(errs) > 0 {
 		return apierrors.NewInvalid(schema.GroupKind{Group: "solas.dev", Kind: "Device"}, d.Name, errs)

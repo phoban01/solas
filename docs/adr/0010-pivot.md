@@ -28,8 +28,10 @@ object.
 
 The old object and the Device name each other in annotations. The
 Device gets the name, the labels, the annotations, and the description
-of the old object. It does not get the status. A pivoted device starts
-free, because a claim on the old CRD is not a solas claim.
+of the old object. It also gets the whole `spec` of the old object in
+`spec.parameters`, so no field is lost. It does not get the status. A
+pivoted device starts free, because a claim on the old CRD is not a
+solas claim.
 
 ## Consequences
 

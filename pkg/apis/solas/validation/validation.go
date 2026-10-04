@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	genericvalidation "k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/phoban01/solas/pkg/apis/solas"
@@ -20,6 +21,7 @@ var (
 func ValidateDevice(d *solas.Device) field.ErrorList {
 	errs := genericvalidation.ValidateObjectMeta(&d.ObjectMeta, false, genericvalidation.NameIsDNSSubdomain, metaPath)
 	errs = append(errs, validateReclaim(&d.Spec, field.NewPath("spec"))...)
+	errs = append(errs, validateParameters(d.Spec.Parameters, field.NewPath("spec", "parameters"))...)
 	return append(errs, validateClaimRef(d.Status.ClaimRef, statusPath.Child("claimRef"))...)
 }
 
@@ -31,6 +33,13 @@ func ValidateDeviceUpdate(d, old *solas.Device) field.ErrorList {
 
 // ValidateDeviceStatusUpdate checks an update of the status of a device.
 func ValidateDeviceStatusUpdate(d, old *solas.Device) field.ErrorList {
+	return ValidateDeviceStatusUpdateWith(d, old, false)
+}
+
+// ValidateDeviceStatusUpdateWith checks an update of the status of a device.
+// With recoveryChecked, it accepts a recovery, spec 14.5: the caller has
+// checked that the old member UID is gone.
+func ValidateDeviceStatusUpdateWith(d, old *solas.Device, recoveryChecked bool) field.ErrorList {
 	errs := genericvalidation.ValidateObjectMetaUpdate(&d.ObjectMeta, &old.ObjectMeta, metaPath)
 	path := statusPath.Child("claimRef")
 	errs = append(errs, validateClaimRef(d.Status.ClaimRef, path)...)
@@ -44,10 +53,16 @@ func ValidateDeviceStatusUpdate(d, old *solas.Device) field.ErrorList {
 	//= spec/solas.md#5-3-status-updates
 	//# To move a device, a client MUST first clear `claimRef` and then set it
 	//# in a second update.
-	if old.Status.ClaimRef != nil && d.Status.ClaimRef != nil && !SameClaim(old.Status.ClaimRef, d.Status.ClaimRef) {
+
+	//= spec/solas.md#14-2-bind-against-the-offer
+	//# Only the claim that the offer names, with the member UID that it names,
+	//# MAY bind against the offer.
+	if old.Status.ClaimRef != nil && d.Status.ClaimRef != nil && !SameClaim(old.Status.ClaimRef, d.Status.ClaimRef) &&
+		!IsTransferBind(d, old) && !(recoveryChecked && IsRecovery(d, old)) {
 		errs = append(errs, field.Forbidden(path,
 			"cannot change the holder of a bound device; clear claimRef first, then set it"))
 	}
+	errs = append(errs, validateOffer(d, old)...)
 	return append(errs, validatePreemption(d, old)...)
 }
 
@@ -131,6 +146,10 @@ func validatePreemption(d, old *solas.Device) field.ErrorList {
 			errs = append(errs, field.Forbidden(path, "the device is not preemptible"))
 		case old.Status.ClaimRef == nil:
 			errs = append(errs, field.Forbidden(path, "the device is free; bind it instead"))
+		//= spec/solas.md#14-1-offer
+		//# The server MUST reject a preemption request while an offer stands.
+		case old.Status.Offer != nil:
+			errs = append(errs, field.Forbidden(path, "the holder offers the device to another claim"))
 		//= spec/solas.md#10-10-protected-holders
 		//# The server MUST reject a preemption request on a device whose holder is
 		//# protected.
@@ -211,4 +230,65 @@ func ValidateMemberPolicy(p *solas.MemberPolicy) field.ErrorList {
 		}
 	}
 	return errs
+}
+
+// MaxParameters is the largest spec.parameters in bytes. A DynamoDB item
+// holds at most 400 KB, and an event item holds the object and the
+// previous object.
+const MaxParameters = 64 * 1024
+
+//= spec/solas.md#5-1-resource
+//# The server MUST store `spec.parameters` as written, and MUST reject it
+//# when it is larger than 64 KiB.
+
+func validateParameters(p *runtime.RawExtension, path *field.Path) field.ErrorList {
+	if p != nil && len(p.Raw) > MaxParameters {
+		return field.ErrorList{field.TooLong(path, len(p.Raw), MaxParameters)}
+	}
+	return nil
+}
+
+// IsTransferBind reports whether an update from old to d is a bind
+// against the offer of old: claimRef moves from the holder to exactly the
+// claim and member UID that the offer names, spec 14.2.
+func IsTransferBind(d, old *solas.Device) bool {
+	return old.Status.ClaimRef != nil && old.Status.Offer != nil && d.Status.ClaimRef != nil &&
+		SameIdentity(d.Status.ClaimRef, old.Status.Offer)
+}
+
+// validateOffer checks the offer rules of spec 14.1.
+func validateOffer(d, old *solas.Device) field.ErrorList {
+	path := statusPath.Child("offer")
+	offer, oldOffer := d.Status.Offer, old.Status.Offer
+	if offer == nil || (oldOffer != nil && SameClaim(offer, oldOffer)) {
+		return nil
+	}
+	errs := validateClaimRef(offer, path)
+	switch {
+	//= spec/solas.md#14-1-offer
+	//# The server MUST reject an offer on a free device, and a second offer
+	//# while one stands.
+	case old.Status.ClaimRef == nil:
+		errs = append(errs, field.Forbidden(path, "the device is free; bind it instead"))
+	case oldOffer != nil:
+		errs = append(errs, field.Forbidden(path, fmt.Sprintf("the device is offered to claim %s/%s of member %s; withdraw that offer first",
+			oldOffer.Namespace, oldOffer.Name, oldOffer.Member)))
+	//= spec/solas.md#14-1-offer
+	//# The server MUST reject an offer while a preemption request stands.
+	case old.Status.Preemption != nil:
+		errs = append(errs, field.Forbidden(path, "a preemption request stands"))
+	case SameIdentity(offer, old.Status.ClaimRef):
+		errs = append(errs, field.Forbidden(path, "the offer names the holder"))
+	}
+	return errs
+}
+
+// IsRecovery reports whether an update from old to d has the shape of a
+// recovery: claimRef keeps the member name and the claim, and moves to
+// another member UID, spec 14.5. The status strategy also checks that the
+// old member UID is gone.
+func IsRecovery(d, old *solas.Device) bool {
+	o, n := old.Status.ClaimRef, d.Status.ClaimRef
+	return o != nil && n != nil && o.Member == n.Member && o.Namespace == n.Namespace &&
+		o.Name == n.Name && o.UID == n.UID && o.MemberUID != n.MemberUID
 }

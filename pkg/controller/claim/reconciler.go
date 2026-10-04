@@ -90,8 +90,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Status().Update(ctx, &claim))
 	case claimsv1alpha1.ClaimLost:
 		//= spec/solas.md#6-5-phases
-		//# A `Lost` claim MUST NOT bind again.
-		return reconcile.Result{}, nil
+		//# A `Lost` claim MUST NOT bind again, except by a recovery, section 14.5.
+		return r.recover(ctx, &claim, st)
 	case claimsv1alpha1.ClaimPending:
 		return r.bind(ctx, &claim, st)
 	default:
@@ -146,14 +146,32 @@ func (r *Reconciler) bind(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 	//= spec/solas.md#6-3-bind
 	//# The controller MUST pick a device from the free devices that match the
 	//# selector.
-	var free []*solasv1alpha1.Device
+	//= spec/solas.md#14-4-pre-bound-claims
+	//# A claim that names a device MUST bind only that device: against an offer
+	//# that names the claim, or as a normal bind when the device is free.
+	named := claim.Spec.DeviceName
+	var free, offered []*solasv1alpha1.Device
 	for i := range devices {
 		d := &devices[i]
+		if named != "" && d.Name != named {
+			continue
+		}
+		if offerFor(d, r.ClusterID, st.UID, claim) {
+			offered = append(offered, d)
+		}
 		if d.Status.ClaimRef == nil && d.DeletionTimestamp.IsZero() && keptFor(d, claim) && sel.Matches(d) {
 			free = append(free, d)
 		}
 	}
+	if len(offered) > 0 {
+		// A bind against an offer, spec 14.2. The server checks that the
+		// offer still names this claim and member UID.
+		free = offered[:1]
+	}
 	if len(free) == 0 {
+		if named != "" {
+			return reconcile.Result{RequeueAfter: r.Resync}, nil
+		}
 		return r.requestPreemption(ctx, claim, st, devices, sel)
 	}
 
@@ -322,9 +340,14 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 			claim.Status.PreemptionSeenAt = nil
 			return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 		}
+		if changed, err := r.startTransfer(ctx, claim, own); changed || err != nil {
+			return reconcile.Result{Requeue: true}, err
+		}
 		if changed, err := r.preemptionStep(ctx, claim, own); changed || err != nil {
 			return reconcile.Result{Requeue: true}, err
 		}
+	case claimsv1alpha1.ClaimTransferring:
+		return r.transferStep(ctx, claim, own, st)
 	case claimsv1alpha1.ClaimPreempted:
 		if _, err := r.preemptionStep(ctx, claim, own); err != nil {
 			return reconcile.Result{}, err

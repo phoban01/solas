@@ -36,6 +36,9 @@ spec:
                 protected:
                   description: The device can only be released, not preempted. The member needs allowProtected in its MemberPolicy.
                   type: boolean
+                deviceName:
+                  description: The one device that the claim binds.
+                  type: string
                 selector:
                   description: Matches Device labels and a CEL expression. Empty matches every device.
                   type: object
@@ -63,7 +66,7 @@ spec:
               properties:
                 phase:
                   type: string
-                  enum: [Pending, Bound, Preempting, Preempted, Suspended, Lost]
+                  enum: [Pending, Bound, Preempting, Preempted, Transferring, Suspended, Lost]
                 deviceName: {type: string}
                 leaseExpiresAt: {type: string, format: date-time}
                 preemptionSeenAt: {type: string, format: date-time}

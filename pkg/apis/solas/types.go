@@ -2,6 +2,7 @@ package solas
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -23,6 +24,9 @@ type DeviceSpec struct {
 	Description string
 	// Attributes holds free-form metadata, spec 10.1.
 	Attributes map[string]string
+	// Parameters holds any JSON that the owner of the device needs. The
+	// server stores it as written and never reads inside it, spec 5.1.
+	Parameters *runtime.RawExtension
 	// Preemptible lets a claim of higher priority take the device, spec 10.5.
 	Preemptible bool
 	// PreemptionGracePeriodSeconds is how long a holder may keep the device
@@ -44,6 +48,8 @@ type DeviceStatus struct {
 	FencingToken int64
 	// Preemption is a request of a claim of higher priority, spec 10.5.
 	Preemption *PreemptionRequest
+	// Offer names the claim that the holder hands the device to, spec 14.1.
+	Offer *ClaimRef
 	// Conditions hold the health of the device, spec 10.1.
 	Conditions []metav1.Condition
 	// LastRelease records the last clear of claimRef: who did it, when,

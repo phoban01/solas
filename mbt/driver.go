@@ -52,11 +52,22 @@ type Driver struct {
 
 // NewDriver builds the REST stores on the given storage.
 func NewDriver(getter generic.RESTOptionsGetter) (*Driver, func(), error) {
-	d, ds, err := device.NewREST(apiserver.Scheme, getter)
+	m, ms, err := member.NewREST(apiserver.Scheme, getter)
 	if err != nil {
 		return nil, nil, err
 	}
-	m, ms, err := member.NewREST(apiserver.Scheme, getter)
+	// A recovery needs the members, spec 14.5.
+	lookup := func(ctx context.Context, name string) (*solas.Member, error) {
+		obj, err := m.Get(ctx, name, &metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return obj.(*solas.Member), nil
+	}
+	d, ds, err := device.NewRESTWithOptions(apiserver.Scheme, getter, device.Options{Members: lookup})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -198,7 +209,66 @@ func (d *Driver) apply(step Step, prev State) error {
 	case "sweepClear", "release", "drainRelease", "releaseDuplicate", "clearOrphan", "operatorRelease":
 		dev := step.Pick("d")
 		return d.writeRef(dev, prev.Devices[dev].RV, cur.Devices[dev].RV, nil, true)
+
+	case "offer", "withdrawOffer", "sweepClearOffer":
+		// The one device whose offer changed.
+		for dev, pd := range prev.Devices {
+			cd := cur.Devices[dev]
+			if pd.Offered == cd.Offered && pd.Offer == cd.Offer {
+				continue
+			}
+			var o *solas.ClaimRef
+			if cd.Offered {
+				var err error
+				if o, err = d.realRef(cd.Offer); err != nil {
+					return err
+				}
+			}
+			return d.writeOffer(dev, pd.RV, cd.RV, o)
+		}
+		return fmt.Errorf("no offer changed")
+
+	case "bindOffer", "recoverWrite":
+		dev := step.Pick("d")
+		ref, err := d.realRef(cur.Devices[dev].Ref)
+		if err != nil {
+			return err
+		}
+		return d.writeRef(dev, prev.Devices[dev].RV, cur.Devices[dev].RV, ref, true)
 	}
+	return nil
+}
+
+// realRef maps a model ref to a claimRef with the real member UID.
+func (d *Driver) realRef(r Ref) (*solas.ClaimRef, error) {
+	uid, known := d.uids[r.MUID]
+	if !known {
+		return nil, fmt.Errorf("no real UID for model member UID %d", r.MUID)
+	}
+	return &solas.ClaimRef{Member: r.Member, MemberUID: uid, Namespace: "ns", Name: r.Claim,
+		UID: claimUID(r.Claim), Priority: int32(r.Prio)}, nil
+}
+
+// writeOffer sets or clears the offer of device dev with the real version
+// of fromRV. The model applied the write.
+func (d *Driver) writeOffer(dev string, fromRV, toRV int64, offer *solas.ClaimRef) error {
+	rv, err := d.realDevRV(dev, fromRV)
+	if err != nil {
+		return err
+	}
+	cur, err := d.devices.Get(ctx(), dev, &metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get device %s: %w", dev, err)
+	}
+	obj := cur.(*solas.Device).DeepCopy()
+	obj.ResourceVersion = rv
+	obj.Status.Offer = offer
+	out, _, err := d.deviceStatus.Update(ctx(), dev, rest.DefaultUpdatedObjectInfo(obj),
+		rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("write of %s offer: model applied it, server err=%v", dev, err)
+	}
+	d.setDevRV(dev, toRV, out.(*solas.Device).ResourceVersion)
 	return nil
 }
 
@@ -285,6 +355,10 @@ func (d *Driver) compare(want State) error {
 			return fmt.Errorf("%s: model request=%v, server request=%+v", name, wd.Requested, got.Status.Preemption)
 		case wd.Requested && (got.Status.Preemption.Claim.Name != wd.Preempt.Claim || got.Status.Preemption.Claim.Priority != int32(wd.Preempt.Prio) || got.Status.Preemption.Claim.MemberUID != d.uids[wd.Preempt.MUID]):
 			return fmt.Errorf("%s: model request=%+v, server request=%+v", name, wd.Preempt, got.Status.Preemption.Claim)
+		case wd.Offered != (got.Status.Offer != nil):
+			return fmt.Errorf("%s: model offer=%v, server offer=%+v", name, wd.Offered, got.Status.Offer)
+		case wd.Offered && (got.Status.Offer.Name != wd.Offer.Claim || got.Status.Offer.Member != wd.Offer.Member || got.Status.Offer.MemberUID != d.uids[wd.Offer.MUID]):
+			return fmt.Errorf("%s: model offer=%+v, server offer=%+v", name, wd.Offer, *got.Status.Offer)
 		case got.Status.FencingToken != wd.Token:
 			return fmt.Errorf("%s: model token=%d, server token=%d", name, wd.Token, got.Status.FencingToken)
 		}

@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -27,6 +28,11 @@ type DeviceSpec struct {
 	// Attributes holds free-form metadata, for example vendor and model.
 	// +optional
 	Attributes map[string]string `json:"attributes,omitempty"`
+	// Parameters holds any JSON that the owner of the device needs. The
+	// server stores it as written and never reads inside it, spec 5.1.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Parameters *runtime.RawExtension `json:"parameters,omitempty"`
 	// Preemptible lets a claim of higher priority take the device.
 	// +optional
 	Preemptible bool `json:"preemptible,omitempty"`
@@ -56,6 +62,10 @@ type DeviceStatus struct {
 	// Preemption is a request of a claim of higher priority.
 	// +optional
 	Preemption *PreemptionRequest `json:"preemption,omitempty"`
+	// Offer names the claim that the holder hands the device to. Only that
+	// claim may bind against it, spec 14.
+	// +optional
+	Offer *ClaimRef `json:"offer,omitempty"`
 	// Conditions hold the health of the device. The party that runs the
 	// device sets them.
 	// +optional

@@ -1,17 +1,16 @@
 # ADR 0017: Gatekeepers for actuators
 
-Status: proposed. The MAAS part is ready. The OCN part waits for its API
-(#179).
+Status: proposed (#230).
 
 ## Context
 
 A fencing token protects a device only when the thing that changes the
 device checks the token (spec 6.6, ADR 0008). The demo device checks it
 itself. Real devices are driven through actuators that do not check
-tokens, such as MAAS for machines. A workload of a paused cluster that
-still believes it holds a machine can then deploy or power it while
-another cluster holds it. Without a check in front of the actuator,
-fencing is nominal.
+tokens, such as a machine provisioning service. A workload of a paused
+cluster that still believes it holds a machine can then deploy or power
+it while another cluster holds it. Without a check in front of the
+actuator, fencing is nominal.
 
 ## Decision
 
@@ -36,20 +35,21 @@ One gatekeeper sits in front of each actuator, as a proxy of its API.
 - **Reads pass through.** Only operations that change a device need a
   token.
 
-### MAAS
+### A machine provisioning service
 
-- The device maps to a MAAS machine by the attribute `maas.systemId`.
-- These operations need a token: `allocate`, `deploy`, `release`,
-  `power_on`, `power_off`, `commission`, `mark_broken`, and any write to
-  the machine or its interfaces and storage.
-- The gatekeeper allocates the machine to its own MAAS user when solas
-  binds it, so MAAS's own owner check also stops a direct call from
-  another user.
+- The device maps to a machine by an attribute that holds the machine ID
+  of the service.
+- These operations need a token: allocate, deploy, release, power on,
+  power off, and any write to the machine, its interfaces, or its
+  storage.
+- The gatekeeper allocates the machine to its own service account when
+  solas binds it, so the owner check of the service also stops a direct
+  call from another account.
 
-### OCN
+### Other actuators
 
-Open. The issue asks for OCN as well. Its API, and which operations
-change a device, are needed before this section can name the check.
+Each other actuator needs its own section, with the operations that
+change a device, before its gatekeeper is designed.
 
 ## Consequences
 
@@ -66,5 +66,5 @@ change a device, are needed before this section can name the check.
   acts on an old view.
 - A highest token in the gatekeeper's memory or local disk: it is lost
   or forked on a restart or a second replica. The store already has it.
-- A check in an agent on each device: a machine that MAAS powers off or
-  redeploys has no running agent.
+- A check in an agent on each device: a machine that is powered off or
+  deployed again has no running agent.
