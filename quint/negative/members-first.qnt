@@ -21,5 +21,7 @@ module members_first {
     grace: 20,
     forceClear: false,
     noPreemptionWait: false,
+    version: Map("a" -> 1, "b" -> 2),
+    skipTokenVersion: 0,
   }).* from "../solas"
 }

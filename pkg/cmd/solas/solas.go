@@ -6,6 +6,7 @@ package solas
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/phoban01/solas/pkg/cmd/server"
 	"github.com/phoban01/solas/pkg/controller"
+	"github.com/phoban01/solas/pkg/format"
+	"github.com/phoban01/solas/pkg/migrate"
 )
 
 // groupVersion is the API that the controller part reads through the
@@ -44,7 +47,7 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	cmd.Use = "solas"
 	cmd.Short = "Serve the solas.dev API from DynamoDB and run the member controller"
 	o.Controller.AddFlags(cmd.Flags())
-	cmd.AddCommand(newMigrateCommand(), newUnsealCommand())
+	cmd.AddCommand(newMigrateCommand(), newUnsealCommand(), newFinalizeCommand())
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
 		if err := errors.Join(o.Server.Validate(), o.Controller.Validate()); err != nil {
 			return err
@@ -58,6 +61,15 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 // solas API through it, then runs the controller part. It returns when
 // either part stops.
 func (o *Options) Run(ctx context.Context) error {
+	store, err := migrate.Open(ctx, o.Server.StorageURL, o.Server.Prefix)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := checkFormat(ctx, store); err != nil {
+		return err
+	}
+
 	config, err := o.Server.Config(ctx)
 	if err != nil {
 		return err
@@ -74,6 +86,7 @@ func (o *Options) Run(ctx context.Context) error {
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return prepared.RunWithContext(ctx) })
+	g.Go(func() error { return watchFormat(ctx, store) })
 	g.Go(func() error {
 		if err := waitForAPI(ctx, restConfig); err != nil {
 			return err
@@ -99,4 +112,49 @@ func waitForAPI(ctx context.Context, cfg *rest.Config) error {
 		}
 		return true, nil
 	})
+}
+
+// formatPoll is how often a running server reads the finalized format.
+const formatPoll = 30 * time.Second
+
+//= spec/solas.md#11-5-rollback
+//# A server MUST refuse to start when the finalized format is above its
+//# maximum format.
+
+// checkFormat reads the finalized format of the store and writes in it
+// from then on, spec 11.2. It fails when the store is finalized above the
+// maximum of this release.
+func checkFormat(ctx context.Context, s *migrate.Store) error {
+	f, err := s.Finalized(ctx)
+	if err != nil {
+		return fmt.Errorf("read the finalized format: %w", err)
+	}
+	if f > format.Max {
+		return fmt.Errorf("the store is finalized at format %d, and this release supports formats %d to %d; run a newer release",
+			f, format.Min, format.Max)
+	}
+	format.SetFinalized(f)
+	return nil
+}
+
+// watchFormat reads the finalized format on a slow poll. It ends the
+// process when the store is finalized above this release, and ignores a
+// failed read.
+func watchFormat(ctx context.Context, s *migrate.Store) error {
+	log := ctrl.Log.WithName("format")
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(formatPoll):
+		}
+		f, err := s.Finalized(ctx)
+		if err != nil {
+			log.Info("cannot read the finalized format", "err", err.Error())
+			continue
+		}
+		if err := checkFormat(ctx, s); err != nil && f > format.Max {
+			return err
+		}
+	}
 }

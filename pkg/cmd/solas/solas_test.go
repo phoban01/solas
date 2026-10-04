@@ -2,6 +2,7 @@ package solas
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,13 @@ func TestBadStorageURL(t *testing.T) {
 	cmd.SetArgs([]string{"--cluster-id=a", "--storage-url=s3://bucket"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("the command ran with a storage URL of an unknown scheme")
+	}
+}
+
+func TestBadStorageVersion(t *testing.T) {
+	cmd := NewCommand(context.Background(), NewOptions())
+	cmd.SetArgs([]string{"--cluster-id=a", "--storage-version=v9"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "storage-version") {
+		t.Fatalf("start with an unknown storage version: err = %v, want a --storage-version error", err)
 	}
 }

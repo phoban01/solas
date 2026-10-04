@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,24 @@ func eventually(t *testing.T, timeout time.Duration, what string, cond func(ctx 
 	err := wait.PollUntilContextTimeout(context.Background(), time.Second, timeout, true,
 		func(ctx context.Context) (bool, error) { return cond(ctx), nil })
 	if err != nil {
+		dumpState(t)
 		t.Fatalf("%s: not true after %v", what, timeout)
+	}
+}
+
+// dumpState prints the claims, the devices, and the last solas logs of each
+// cluster, so a failed wait shows why. The clusters are gone after the run.
+func dumpState(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"a", "b"} {
+		for _, args := range [][]string{
+			{"get", "deviceclaims", "-A", "-o", "wide"},
+			{"get", "devices", "-o", "wide"},
+			{"-n", "solas-system", "logs", "deploy/solas", "--tail=60"},
+		} {
+			out, _ := exec.Command("kubectl", append([]string{"--kubeconfig", kubeconfig(name)}, args...)...).CombinedOutput()
+			t.Logf("[%s] kubectl %s\n%s", name, strings.Join(args, " "), out)
+		}
 	}
 }
 

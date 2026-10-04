@@ -49,9 +49,10 @@ func Copy(ctx context.Context, src, dst *Store, dryRun bool, out io.Writer) (Rep
 				return rep, err
 			}
 			fmt.Fprintf(out, "copy %s/%s uid %s\n", r.gr.Resource, m.GetName(), m.GetUID())
-			if r.gr == devices.gr {
+			switch r.gr {
+			case devices.gr:
 				rep.Devices++
-			} else {
+			case members.gr:
 				rep.Members++
 			}
 			if dryRun {

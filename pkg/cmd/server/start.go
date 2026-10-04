@@ -29,6 +29,9 @@ type Options struct {
 	RecommendedOptions *genericoptions.RecommendedOptions
 	Registry           basecompatibility.ComponentGlobalsRegistry
 
+	// StorageVersion is the version of the group that objects are stored
+	// in, spec 11.2.
+	StorageVersion string
 	// StorageURL picks the shared store, spec 2.6.
 	StorageURL     string
 	EventRetention time.Duration
@@ -44,6 +47,7 @@ func NewOptions() *Options {
 		RecommendedOptions: genericoptions.NewRecommendedOptions("/registry", apiserver.StorageCodec()),
 		Registry:           compatibility.DefaultComponentGlobalsRegistry,
 		StorageURL:         "dynamodb://" + dynamo.DefaultTable,
+		StorageVersion:     "v1alpha1",
 		EventRetention:     dynamo.DefaultEventRetention,
 		PollInterval:       dynamo.DefaultPollInterval,
 		Prefix:             "/registry",
@@ -85,6 +89,7 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 		"The shared store. All member clusters must use the same store. "+
 			"dynamodb://<table>?region=<region>&endpoint=<url>&create-table=true picks a DynamoDB table in one region; "+
 			"etcd://<host:port>[,<host:port>...] picks an etcd cluster.")
+	flags.StringVar(&o.StorageVersion, "storage-version", o.StorageVersion, "Version of the solas.dev group that objects are stored in. Every member must be able to read it.")
 	flags.DurationVar(&o.EventRetention, "event-retention", o.EventRetention, "How long events stay in the event log of the DynamoDB store.")
 	flags.DurationVar(&o.PollInterval, "poll-interval", o.PollInterval, "How often a watch polls the event log of the DynamoDB store.")
 	flags.StringVar(&o.Prefix, "storage-prefix", o.Prefix, "Key prefix in the store. All member clusters must use the same prefix.")
@@ -100,6 +105,9 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 func (o *Options) Validate() error {
 	errs := o.RecommendedOptions.Validate()
 	errs = append(errs, o.Registry.Validate()...)
+	if _, _, err := apiserver.StorageCodecFor(o.StorageVersion); err != nil {
+		errs = append(errs, fmt.Errorf("--storage-version: %w", err))
+	}
 	if _, err := storageurl.Parse(o.StorageURL); err != nil {
 		errs = append(errs, fmt.Errorf("--storage-url: %w", err))
 	}
@@ -141,9 +149,13 @@ func (o *Options) Config(ctx context.Context) (*apiserver.Config, error) {
 
 // restOptionsGetter builds the store that the storage URL picks.
 func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsGetter, error) {
+	codec, versioner, err := apiserver.StorageCodecFor(o.StorageVersion)
+	if err != nil {
+		return apiserver.RESTOptionsGetter{}, fmt.Errorf("--storage-version: %w", err)
+	}
 	getter := apiserver.RESTOptionsGetter{
-		Codec:           apiserver.StorageCodec(),
-		EncodeVersioner: apiserver.StorageVersioner(),
+		Codec:           codec,
+		EncodeVersioner: versioner,
 		Prefix:          o.Prefix,
 	}
 	sc, err := storageurl.Parse(o.StorageURL)

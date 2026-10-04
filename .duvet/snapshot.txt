@@ -463,6 +463,39 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: The controller MUST clear a request that names its own member and a claim
     TEXT[!MUST,implementation]: that does not exist, as it does for a `claimRef`, spec 6.4.
 
+  SECTION: [11.1. Format version](#11-1-format-version)
+    TEXT[!MUST]: The store MUST hold one finalized format version.
+    TEXT[implementation]: The finalized format starts at 1.
+    TEXT[!MUST,implementation,test]: Each object MUST record the format version of its last write in the
+    TEXT[!MUST,implementation,test]: annotation `solas.dev/format`.
+    TEXT[implementation]: An object with no record has format 1.
+
+  SECTION: [11.2. Write rule](#11-2-write-rule)
+    TEXT[!MUST,implementation]: A server MUST NOT write an object in a format newer than the finalized
+    TEXT[!MUST,implementation]: format.
+    TEXT[!MUST]: A server MUST be able to read every format from 1 up to its own maximum.
+    TEXT[!MUST]: A release MUST be able to read every format that the previous release
+    TEXT[!MUST]: can write.
+
+  SECTION: [11.3. Newer objects](#11-3-newer-objects)
+    TEXT[!MUST,implementation,test]: A server MUST reject a write to an object whose format is newer than its
+    TEXT[!MUST,implementation,test]: own maximum.
+    TEXT[!MUST,implementation]: A server MUST NOT drop a field that it does not know.
+    TEXT[!MAY,test]: A server MAY read a newer object, on a best effort basis.
+
+  SECTION: [11.4. Finalization](#11-4-finalization)
+    TEXT[!MUST,implementation,test]: Each member MUST report the lowest and the highest format that it
+    TEXT[!MUST,implementation,test]: supports in its `Member` status.
+    TEXT[!MUST,implementation,test]: The finalized format MUST only move up.
+    TEXT[!MUST,implementation,test]: The finalized format MUST move to a value only when every `Active`
+    TEXT[!MUST,implementation,test]: member reports a highest format at or above that value.
+
+  SECTION: [11.5. Rollback](#11-5-rollback)
+    TEXT[!MAY,implementation]: A member MAY roll back to a release whose maximum format is at or above
+    TEXT[!MAY,implementation]: the finalized format.
+    TEXT[!MUST,implementation,test]: A server MUST refuse to start when the finalized format is above its
+    TEXT[!MUST,implementation,test]: maximum format.
+
   SECTION: [12.1. Seal](#12-1-seal)
     TEXT[!MUST,implementation,test]: A sealed store MUST reject every write.
     TEXT[!MUST,test]: A sealed store MUST serve reads.

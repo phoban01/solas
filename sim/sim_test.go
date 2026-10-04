@@ -132,3 +132,67 @@ func TestSimReachesPreemption(t *testing.T) {
 	}
 	t.Fatal("no seed preempted a claim")
 }
+
+// TestSimFormatUpgrade upgrades the format of the mesh, spec 11. Two
+// clusters run release 1. One moves to release 2, and finalize is refused.
+// The second moves, and finalize passes. The first rolls back to release 1
+// and refuses to start. The checks of invariants.go hold after every step.
+func TestSimFormatUpgrade(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfig()
+	cfg.Clusters, cfg.NoLeave = 2, true
+	w, err := NewWorld(ctx, 7, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := func(n int) {
+		t.Helper()
+		for range n {
+			w.step++
+			w.Step(ctx)
+			if err := w.check(ctx); err != nil {
+				t.Fatal(w.fail(err))
+			}
+		}
+	}
+	// settle wakes every running cluster and lets its member renew, so its
+	// Member shows the range of its release.
+	settle := func() {
+		t.Helper()
+		for _, c := range w.clusters {
+			if c.down {
+				continue
+			}
+			c.paused = false
+			for range 3 {
+				w.log("%s member tick: %s", c.name, errText(c.members.Tick(ctx)))
+			}
+			if err := w.check(ctx); err != nil {
+				t.Fatal(w.fail(err))
+			}
+		}
+	}
+	c0, c1 := w.clusters[0], w.clusters[1]
+
+	steps(300)
+	w.setRelease(c0, 2)
+	steps(100)
+	settle()
+	if err := w.finalize(ctx, 2); err == nil || !strings.Contains(err.Error(), "c1 (highest format 1)") {
+		t.Fatalf("finalize with c1 on release 1: err = %v, want a refusal that names c1", err)
+	}
+	w.setRelease(c1, 2)
+	steps(100)
+	settle()
+	if err := w.finalize(ctx, 2); err != nil {
+		t.Fatalf("finalize with both clusters on release 2: %v", err)
+	}
+	w.setRelease(c0, 1)
+	if !c0.down {
+		t.Fatal("c0 started on release 1 after the store was finalized at 2")
+	}
+	steps(300)
+	if c0.members.Status().Live {
+		t.Error("c0 is live on a release that refused to start")
+	}
+}

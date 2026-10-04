@@ -39,15 +39,20 @@ type cluster struct {
 	// paused stops every step of the cluster while its clock runs, as a
 	// paused node or a long GC pause would.
 	paused bool
+	// maxFormat is the highest format of the release that the cluster
+	// runs, spec 11. down is true when that release refused to start.
+	maxFormat int32
+	down      bool
 }
 
 func newCluster(name string, shared client.Client, start time.Time, s Settings, rng *rand.Rand, lag float64) *cluster {
 	c := &cluster{
-		name:     name,
-		client:   newRouter(shared, rand.New(rand.NewPCG(rng.Uint64(), rng.Uint64())), lag),
-		clock:    clocktesting.NewFakePassiveClock(start),
-		settings: s,
-		rng:      rng,
+		name:      name,
+		client:    newRouter(shared, rand.New(rand.NewPCG(rng.Uint64(), rng.Uint64())), lag),
+		clock:     clocktesting.NewFakePassiveClock(start),
+		settings:  s,
+		rng:       rng,
+		maxFormat: 1,
 	}
 	c.build()
 	return c
@@ -59,6 +64,7 @@ func (c *cluster) build() {
 	c.members = &member.Manager{
 		Client: c.client, Reader: c.client, ClusterID: c.name,
 		Lease: c.settings.Lease, Margin: c.settings.Margin, Clock: c.clock,
+		MaxFormat: c.maxFormat,
 	}
 	c.claims = &claim.Reconciler{
 		Client: c.client, Reader: c.client, ClusterID: c.name,

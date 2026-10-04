@@ -64,6 +64,10 @@ pass "negative no-token-check" quint test quint/negative/no-token-check.qnt \
   --main no_token_check
 # The test passes when the forced clear of spec 10.8 breaks
 # claimMatchesDevice.
+# The test passes when a release that does not raise the token breaks
+# tokensUnique, spec 11.2.
+pass "negative no-token-raise" quint test quint/negative/no-token-raise.qnt \
+  --main no_token_raise --match tokenRaiseTest
 pass "negative force-clear" quint test quint/negative/force-clear.qnt \
   --main force_clear
 

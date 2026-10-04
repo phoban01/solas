@@ -197,3 +197,34 @@ func TestJoinMarksLostBeforeLive(t *testing.T) {
 		t.Errorf("status %+v, marked %v", st, marked)
 	}
 }
+
+//= spec/solas.md#11-4-finalization
+//= type=test
+//# Each member MUST report the lowest and the highest format that it
+//# supports in its `Member` status.
+
+func TestMemberReportsItsFormats(t *testing.T) {
+	ctx := context.Background()
+	// A Member that an older release created has no range.
+	existing := &solasv1alpha1.Member{}
+	existing.Name, existing.UID = "cluster-a", types.UID("old-uid")
+	existing.Status.Phase = solasv1alpha1.MemberActive
+	c := fakekube.NewClient(existing)
+	m := newManager(c, clocktesting.NewFakePassiveClock(time.Unix(1000, 0)))
+	if err := m.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := getMember(t, c).Status; got.MinFormat != 1 || got.MaxFormat != 1 {
+		t.Errorf("after the first renew: formats %d-%d, want 1-1", got.MinFormat, got.MaxFormat)
+	}
+
+	// A new member reports its range when it joins.
+	c = fakekube.NewClient()
+	m = newManager(c, clocktesting.NewFakePassiveClock(time.Unix(1000, 0)))
+	if err := m.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := getMember(t, c).Status; got.MinFormat != 1 || got.MaxFormat != 1 {
+		t.Errorf("after the join: formats %d-%d, want 1-1", got.MinFormat, got.MaxFormat)
+	}
+}

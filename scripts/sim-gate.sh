@@ -11,7 +11,7 @@ export SIM_SEEDS=${SIM_SEEDS:-400} SIM_SHARDS=$shards
 run_shard() {
   local shard=$1 tests='TestSim$'
   if [ "$shard" = 0 ]; then
-    tests='TestSim$|TestSimBrokenStore|TestSimDeterministic|TestSimReachesPreemption'
+    tests='TestSim$|TestSimBrokenStore|TestSimDeterministic|TestSimReachesPreemption|TestSimFormatUpgrade'
   fi
   SIM_SHARD=$shard go test -race -count=1 -timeout 60m -run "$tests" ./sim/ >"$out/$shard.log" 2>&1
 }

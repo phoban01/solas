@@ -32,7 +32,9 @@ var (
 		func() runtime.Object { return &solas.DeviceList{} }}
 	members = resource{solas.Resource("members"), func() runtime.Object { return &solas.Member{} },
 		func() runtime.Object { return &solas.MemberList{} }}
-	resources = []resource{devices, members}
+	formats = resource{solas.Resource("storeformats"), func() runtime.Object { return &solas.StoreFormat{} },
+		func() runtime.Object { return &solas.StoreFormatList{} }}
+	resources = []resource{devices, members, formats}
 )
 
 // ResourcePrefixes are the resource prefixes of the resources that a move
@@ -48,13 +50,15 @@ func ResourcePrefixes() []string {
 //= spec/solas.md#12-2-copy
 //# The tool MUST copy at the storage level, not through the API server.
 
-// Store is the raw storage of the Devices and Members of one store, with
+// Store is the raw storage of the Devices, Members, and format of one store, with
 // no API server and no watch cache in front of it.
 type Store struct {
 	URL     storageurl.Config
 	Prefix  string
 	Devices k8sstorage.Interface
 	Members k8sstorage.Interface
+	// Formats holds the finalized format of the store, spec 11.1.
+	Formats k8sstorage.Interface
 	// Dynamo is set for a DynamoDB store, so the tool can seal it.
 	Dynamo  *dynamo.Config
 	destroy []factory.DestroyFunc
@@ -104,6 +108,10 @@ func Open(ctx context.Context, url, prefix string) (*Store, error) {
 		s.Close()
 		return nil, err
 	}
+	if s.Formats, err = open(formats); err != nil {
+		s.Close()
+		return nil, err
+	}
 	if s.Members, err = open(members); err != nil {
 		s.Close()
 		return nil, err
@@ -120,10 +128,13 @@ func (s *Store) Close() {
 
 // storageFor returns the storage of a resource.
 func (s *Store) storageFor(r resource) k8sstorage.Interface {
-	if r.gr == devices.gr {
+	switch r.gr {
+	case devices.gr:
 		return s.Devices
+	case members.gr:
+		return s.Members
 	}
-	return s.Members
+	return s.Formats
 }
 
 // list returns every object of a resource.
@@ -136,6 +147,10 @@ func (s *Store) list(ctx context.Context, r resource) ([]runtime.Object, error) 
 	var out []runtime.Object
 	switch l := list.(type) {
 	case *solas.DeviceList:
+		for i := range l.Items {
+			out = append(out, &l.Items[i])
+		}
+	case *solas.StoreFormatList:
 		for i := range l.Items {
 			out = append(out, &l.Items[i])
 		}

@@ -757,6 +757,55 @@ list, as it does for a `claimRef`, spec 8.3.
 The controller MUST clear a request that names its own member and a claim
 that does not exist, as it does for a `claimRef`, spec 6.4.
 
+## 11. Version skew
+
+Member clusters upgrade in waves, so servers of two releases share one
+store, ADR 0013.
+
+### 11.1. Format version
+
+The store MUST hold one finalized format version.
+The finalized format starts at 1.
+Each object MUST record the format version of its last write in the
+annotation `solas.dev/format`.
+An object with no record has format 1.
+Each server has a maximum format: the newest format that it can read and
+write.
+
+### 11.2. Write rule
+
+A server MUST NOT write an object in a format newer than the finalized
+format.
+A server MUST be able to read every format from 1 up to its own maximum.
+A release MUST be able to read every format that the previous release
+can write.
+A new field takes two releases: the first reads and keeps it, and the
+second writes it.
+
+### 11.3. Newer objects
+
+A server MUST reject a write to an object whose format is newer than its
+own maximum.
+A server MUST NOT drop a field that it does not know.
+The rejection keeps this rule: a server never decodes and writes back an
+object that may hold fields it does not know.
+A server MAY read a newer object, on a best effort basis.
+
+### 11.4. Finalization
+
+Each member MUST report the lowest and the highest format that it
+supports in its `Member` status.
+The finalized format MUST only move up.
+The finalized format MUST move to a value only when every `Active`
+member reports a highest format at or above that value.
+
+### 11.5. Rollback
+
+A member MAY roll back to a release whose maximum format is at or above
+the finalized format.
+A server MUST refuse to start when the finalized format is above its
+maximum format.
+
 ## 12. Migration
 
 A mesh can move from one store to another, ADR 0015. The tool seals the

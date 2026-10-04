@@ -125,3 +125,28 @@ func TestUnsealAnEmptyDestination(t *testing.T) {
 		t.Errorf("sealed after unseal = %v, %v", sealed, err)
 	}
 }
+
+//= spec/solas.md#11-5-rollback
+//= type=test
+//# A server MUST refuse to start when the finalized format is above its
+//# maximum format.
+
+func TestRefuseStartAboveMaxFormat(t *testing.T) {
+	ctx := context.Background()
+	to := "etcd://" + strings.TrimPrefix(etcdtest.Servers(t)[0], "http://")
+	s, err := migrate.Open(ctx, to, etcdtest.Prefix(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := checkFormat(ctx, s); err != nil {
+		t.Fatalf("start on a new store: %v", err)
+	}
+	// A newer release finalized format 2; no member is Active here.
+	if err := s.Finalize(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkFormat(ctx, s); err == nil || !strings.Contains(err.Error(), "finalized at format 2") {
+		t.Errorf("start on a store at format 2: err = %v, want a refusal", err)
+	}
+}

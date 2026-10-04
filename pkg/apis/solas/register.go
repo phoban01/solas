@@ -34,6 +34,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&DeviceList{},
 		&Member{},
 		&MemberList{},
+		&StoreFormat{},
+		&StoreFormatList{},
 	)
 	return nil
 }

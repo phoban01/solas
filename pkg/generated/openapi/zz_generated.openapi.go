@@ -29,6 +29,8 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		v1alpha1.MemberSpec{}.OpenAPIModelName():          schema_pkg_apis_solas_v1alpha1_MemberSpec(ref),
 		v1alpha1.MemberStatus{}.OpenAPIModelName():        schema_pkg_apis_solas_v1alpha1_MemberStatus(ref),
 		v1alpha1.PreemptionRequest{}.OpenAPIModelName():   schema_pkg_apis_solas_v1alpha1_PreemptionRequest(ref),
+		v1alpha1.StoreFormat{}.OpenAPIModelName():         schema_pkg_apis_solas_v1alpha1_StoreFormat(ref),
+		v1alpha1.StoreFormatList{}.OpenAPIModelName():     schema_pkg_apis_solas_v1alpha1_StoreFormatList(ref),
 		resource.Quantity{}.OpenAPIModelName():            schema_apimachinery_pkg_api_resource_Quantity(ref),
 		v1.APIGroup{}.OpenAPIModelName():                  schema_pkg_apis_meta_v1_APIGroup(ref),
 		v1.APIGroupList{}.OpenAPIModelName():              schema_pkg_apis_meta_v1_APIGroupList(ref),
@@ -490,6 +492,20 @@ func schema_pkg_apis_solas_v1alpha1_MemberStatus(ref common.ReferenceCallback) c
 							Format:      "",
 						},
 					},
+					"minFormat": {
+						SchemaProps: spec.SchemaProps{
+							Description: "MinFormat is the lowest format that the member supports, spec 11.4. A member with no range supports format 1 only.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"maxFormat": {
+						SchemaProps: spec.SchemaProps{
+							Description: "MaxFormat is the highest format that the member supports.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
 				},
 			},
 		},
@@ -524,6 +540,96 @@ func schema_pkg_apis_solas_v1alpha1_PreemptionRequest(ref common.ReferenceCallba
 		},
 		Dependencies: []string{
 			v1alpha1.ClaimRef{}.OpenAPIModelName(), v1.Time{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_StoreFormat(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StoreFormat holds the finalized format of the store, spec 11.1. The API does not serve it: solas finalize writes it at the storage level, and solas migrate copies it.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1.ObjectMeta{}.OpenAPIModelName()),
+						},
+					},
+					"finalized": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Finalized is the finalized format. Zero reads as 1.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+			},
+		},
+		Dependencies: []string{
+			v1.ObjectMeta{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_solas_v1alpha1_StoreFormatList(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "StoreFormatList is a list of store formats. A store holds at most one.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"metadata": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(v1.ListMeta{}.OpenAPIModelName()),
+						},
+					},
+					"items": {
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: ref(v1alpha1.StoreFormat{}.OpenAPIModelName()),
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"items"},
+			},
+		},
+		Dependencies: []string{
+			v1alpha1.StoreFormat{}.OpenAPIModelName(), v1.ListMeta{}.OpenAPIModelName()},
 	}
 }
 

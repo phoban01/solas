@@ -85,6 +85,12 @@ module solas {
     // spec 10.8. noPreemptionWait drops the wait before it.
     forceClear: bool,
     noPreemptionWait: bool,
+    // The release of the solas server of each cluster, spec 11. The
+    // server of the cluster that binds issues the token. skipTokenVersion
+    // names a release that does not raise the token on a bind; 0 names
+    // none. The negative model no-token-raise sets it.
+    version: str -> int,
+    skipTokenVersion: int,
   }
 
   type State = {
@@ -500,7 +506,10 @@ module solas {
       or (dv.rv == msg.rv and (isFree(dv.ref) or dv.ref == ref) and reserved)
     val rest = s.inflight.exclude(Set(msg))
     // A bind of a free device gets the old token plus 1, spec 5.3.
-    val token = if (isFree(dv.ref)) dv.token + 1 else dv.token
+    // The server of the binding cluster issues it. Members of two releases
+    // share the store, spec 11, and the token rule must hold across them.
+    val raise = CFG.version.get(msg.cluster) != CFG.skipTokenVersion
+    val token = if (isFree(dv.ref) and raise) dv.token + 1 else dv.token
     val written = writeRef(msg.dev, ref)
     all {
       s.inflight.contains(msg),
@@ -1015,6 +1024,8 @@ module solas2 {
     grace: 20,
     forceClear: false,
     noPreemptionWait: false,
+    version: Map("a" -> 1, "b" -> 2),
+    skipTokenVersion: 0,
   }).*
 
   pure val fastB = Map("a" -> 0, "b" -> 1)

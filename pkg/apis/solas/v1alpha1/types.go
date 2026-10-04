@@ -133,6 +133,13 @@ type MemberStatus struct {
 	// Phase is Active or Draining.
 	// +optional
 	Phase MemberPhase `json:"phase,omitempty"`
+	// MinFormat is the lowest format that the member supports, spec 11.4.
+	// A member with no range supports format 1 only.
+	// +optional
+	MinFormat int32 `json:"minFormat,omitempty"`
+	// MaxFormat is the highest format that the member supports.
+	// +optional
+	MaxFormat int32 `json:"maxFormat,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -143,4 +150,28 @@ type MemberList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []Member `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// StoreFormat holds the finalized format of the store, spec 11.1. The API
+// does not serve it: solas finalize writes it at the storage level, and
+// solas migrate copies it.
+type StoreFormat struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Finalized is the finalized format. Zero reads as 1.
+	// +optional
+	Finalized int32 `json:"finalized,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// StoreFormatList is a list of store formats. A store holds at most one.
+type StoreFormatList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []StoreFormat `json:"items"`
 }

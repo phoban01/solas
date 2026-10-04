@@ -29,6 +29,9 @@ type Config struct {
 	Lag float64
 	// Unconditional breaks the store on purpose, see fakekube.Options.
 	Unconditional bool
+	// NoLeave turns off the random graceful leave, for scenarios that need
+	// every member Active.
+	NoLeave bool
 }
 
 // DefaultConfig is the configuration of the gate.
@@ -61,6 +64,8 @@ type World struct {
 	// witness test.
 	sawPreempted bool
 	step         int
+	// finalized is the finalized format of the store, spec 11.1.
+	finalized int32
 }
 
 // gate is a device gatekeeper, spec 6.6.
@@ -77,12 +82,13 @@ type use struct {
 // NewWorld builds a run from a seed.
 func NewWorld(ctx context.Context, seed uint64, cfg Config) (*World, error) {
 	w := &World{
-		cfg:      cfg,
-		seed:     seed,
-		rng:      rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
-		shared:   newShared(cfg.Unconditional),
-		gates:    map[string]*gate{},
-		bindings: map[string]map[int64]string{},
+		cfg:       cfg,
+		seed:      seed,
+		rng:       rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
+		shared:    newShared(cfg.Unconditional),
+		gates:     map[string]*gate{},
+		finalized: 1,
+		bindings:  map[string]map[int64]string{},
 	}
 	for i := range cfg.Devices {
 		name := fmt.Sprintf("d%d", i+1)
@@ -143,6 +149,8 @@ func (w *World) Step(ctx context.Context) {
 	switch {
 	case roll < 20:
 		w.tick()
+	case c.down:
+		// A cluster whose release refused to start does nothing.
 	case c.paused:
 		// A paused cluster does nothing, except wake up now and then.
 		if roll < 25 {
@@ -173,7 +181,7 @@ func (w *World) Step(ctx context.Context) {
 	case roll < 93:
 		c.restart()
 		w.log("%s restart", c.name)
-	case roll < 94:
+	case roll < 94 && !w.cfg.NoLeave:
 		w.leave(ctx, c)
 	}
 }

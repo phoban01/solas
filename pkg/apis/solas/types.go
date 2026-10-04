@@ -113,6 +113,10 @@ type MemberStatus struct {
 	RenewTime *metav1.MicroTime
 	// Phase is Active or Draining.
 	Phase MemberPhase
+	// MinFormat and MaxFormat are the lowest and the highest format that
+	// the member supports, spec 11.4. Zero reads as 1.
+	MinFormat int32
+	MaxFormat int32
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -123,4 +127,27 @@ type MemberList struct {
 	metav1.ListMeta
 
 	Items []Member
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// StoreFormat holds the finalized format of the store, spec 11.1. The API
+// does not serve it: solas finalize writes it at the storage level, and
+// solas migrate copies it.
+type StoreFormat struct {
+	metav1.TypeMeta
+	metav1.ObjectMeta
+
+	// Finalized is the finalized format. Zero reads as 1.
+	Finalized int32
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// StoreFormatList is a list of store formats. A store holds at most one.
+type StoreFormatList struct {
+	metav1.TypeMeta
+	metav1.ListMeta
+
+	Items []StoreFormat
 }
