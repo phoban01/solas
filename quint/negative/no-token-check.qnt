@@ -22,6 +22,9 @@ module no_token_check {
     noPreemptionWait: false,
     version: Map("a" -> 1, "b" -> 2),
     skipTokenVersion: 0,
+    readGap: 15,
+    reclaim: Map("d1" -> "Delete", "d2" -> "Delete"),
+    reclaimDelay: 0,
   }).* from "../solas"
 
   pure val fastB = Map("a" -> 0, "b" -> 1)
@@ -36,9 +39,9 @@ module no_token_check {
       .then(adopt("a1", "d1"))
       .then(use("a1"))
       .then(observe("b", "a"))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
       .then(sweepDelete("b", "a"))
       .then(sweepListDevices("b"))
       .then(sweepListMembers("b"))

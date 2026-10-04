@@ -135,3 +135,42 @@ func schemaFor(resourcePrefix string) (gr schema.GroupResource) {
 	}
 	return gr
 }
+
+//= spec/solas.md#13-3-resource-versions
+//# On the DynamoDB store, the restore tool MUST raise each counter item to
+//# at least `epoch * 2^32`.
+
+// RaiseCounters raises the counter item of each resource to at least min,
+// so every later write gets a resource version above min, spec 13.3. A
+// watch from an older version then finds a gap and fails with 410 Gone.
+func RaiseCounters(ctx context.Context, cfg Config, prefix string, resourcePrefixes []string, min uint64) error {
+	for _, rp := range resourcePrefixes {
+		s, err := newStore(cfg, nil, nil, nil, prefix, rp, schemaFor(rp))
+		if err != nil {
+			return err
+		}
+		n, _, err := s.readCounterSealed(ctx)
+		if err != nil {
+			return err
+		}
+		if n >= min {
+			continue
+		}
+		pk, sk := s.counterKey()
+		_, err = s.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			ClientRequestToken: aws.String(newToken()),
+			TransactItems: []types.TransactWriteItem{{Update: &types.Update{
+				TableName:                 aws.String(s.table),
+				Key:                       map[string]types.AttributeValue{attrPK: str(pk), attrSK: str(sk)},
+				UpdateExpression:          aws.String("SET #n = :min"),
+				ConditionExpression:       aws.String("#n < :min"),
+				ExpressionAttributeNames:  map[string]string{"#n": attrN},
+				ExpressionAttributeValues: map[string]types.AttributeValue{":min": num(min)},
+			}}},
+		})
+		if err != nil {
+			return fmt.Errorf("raise the counter of %s: %w", s.resource, err)
+		}
+	}
+	return nil
+}

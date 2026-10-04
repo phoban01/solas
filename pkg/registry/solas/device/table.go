@@ -27,6 +27,7 @@ var columns = []metav1.TableColumnDefinition{
 	{Name: "Age", Type: "string"},
 	{Name: "Preemptible", Type: "boolean", Priority: 1},
 	{Name: "Preemption", Type: "string", Priority: 1, Description: "member/namespace/name of the claim that asks for the device"},
+	{Name: "Reclaim", Type: "string", Priority: 1, Description: "reclaim policy, spec 8.5"},
 }
 
 func (tableConvertor) ConvertToTable(_ context.Context, obj runtime.Object, _ runtime.Object) (*metav1.Table, error) {
@@ -57,9 +58,17 @@ func (tableConvertor) ConvertToTable(_ context.Context, obj runtime.Object, _ ru
 		}
 		table.Rows = append(table.Rows, metav1.TableRow{
 			Cells: []any{d.Name, ready, member, claim,
-				duration.HumanDuration(metav1.Now().Sub(d.CreationTimestamp.Time)), d.Spec.Preemptible, preemption},
+				duration.HumanDuration(metav1.Now().Sub(d.CreationTimestamp.Time)), d.Spec.Preemptible, preemption, reclaimPolicy(d)},
 			Object: runtime.RawExtension{Object: d},
 		})
 	}
 	return table, nil
+}
+
+// reclaimPolicy returns the reclaim policy of a device, Delete when unset.
+func reclaimPolicy(d *solas.Device) string {
+	if d.Spec.ReclaimPolicy == "" {
+		return string(solas.ReclaimDelete)
+	}
+	return string(d.Spec.ReclaimPolicy)
 }

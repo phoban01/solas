@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/names"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/apis/solas/validation"
+	"github.com/phoban01/solas/pkg/format"
 )
 
 // strategy handles creates, updates, and deletes of devices.
@@ -98,6 +101,7 @@ func (statusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Obj
 	// Labels and annotations belong to the main resource.
 	d.Labels, d.Annotations = o.Labels, o.Annotations
 	d.Status.FencingToken = nextToken(o, d)
+	d.Status.LastRelease = lastRelease(ctx, o, d)
 	//= spec/solas.md#10-7-bind-by-the-preemptor
 	//# The bind of the requesting claim MUST clear `status.preemption`.
 	if req := o.Status.Preemption; req != nil && o.Status.ClaimRef == nil && d.Status.ClaimRef != nil &&
@@ -120,7 +124,7 @@ func (statusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Obj
 // update from old to d.
 func nextToken(old, d *solas.Device) int64 {
 	if old.Status.ClaimRef == nil && d.Status.ClaimRef != nil {
-		return old.Status.FencingToken + 1
+		return format.NextToken(old.Status.FencingToken, format.Epoch())
 	}
 	return old.Status.FencingToken
 }
@@ -157,4 +161,22 @@ func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
 // Match returns a predicate for devices.
 func Match(label labels.Selector, field fields.Selector) storage.SelectionPredicate {
 	return storage.SelectionPredicate{Label: label, Field: field, GetAttrs: GetAttrs}
+}
+
+//= spec/solas.md#8-5-reclaim-policy
+//# The release MUST record who released the device.
+
+// lastRelease returns the release record that the server stores. A clear
+// of claimRef records the user of the request, the time, and the claim
+// that held the device. Every other update keeps the old record; the
+// server ignores a record that a client sends.
+func lastRelease(ctx context.Context, old, d *solas.Device) *solas.Release {
+	if old.Status.ClaimRef == nil || d.Status.ClaimRef != nil {
+		return old.Status.LastRelease
+	}
+	by := ""
+	if u, ok := genericapirequest.UserFrom(ctx); ok {
+		by = u.GetName()
+	}
+	return &solas.Release{By: by, At: metav1.Now(), Claim: *old.Status.ClaimRef}
 }

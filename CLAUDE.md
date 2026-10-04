@@ -93,6 +93,21 @@ Claude Code session, so heavy jobs must not overlap.
 - `solas migrate` moves the data to another store: it seals the source,
   copies, and verifies
   ([docs/adr/0015-migration.md](docs/adr/0015-migration.md)).
+- The reclaim policy of a Device decides when its devices are cleared
+  after their member is gone: Delete, Delay, or Retain
+  ([docs/adr/0016-reclaim-policy.md](docs/adr/0016-reclaim-policy.md)).
+- A gatekeeper in front of each actuator checks fencing tokens against
+  the store (proposed; MAAS designed, OCN open)
+  ([docs/adr/0017-actuator-gatekeepers.md](docs/adr/0017-actuator-gatekeepers.md)).
+- A restore moves the store to a new epoch, which tokens and resource
+  versions carry, so they never go back
+  ([docs/adr/0018-restore-epoch.md](docs/adr/0018-restore-epoch.md)).
+- A holder transfers a device to a named claim in one write, and a claim
+  can name its device
+  ([docs/adr/0019-transfer.md](docs/adr/0019-transfer.md)).
+- A rejoined member recovers a device that still names its old identity,
+  with a token raise
+  ([docs/adr/0020-lost-claim-recovery.md](docs/adr/0020-lost-claim-recovery.md)).
 
 ## Writing
 

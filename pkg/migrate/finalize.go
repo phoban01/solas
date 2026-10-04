@@ -87,3 +87,14 @@ func (s *Store) Finalize(ctx context.Context, n int32) error {
 	}
 	return err
 }
+
+// Epoch returns the epoch of the store, spec 13.1. A store with no record
+// is at epoch 0.
+func (s *Store) Epoch(ctx context.Context) (int64, error) {
+	var f solas.StoreFormat
+	err := s.Formats.Get(ctx, formatKey, k8sstorage.GetOptions{}, &f)
+	if k8sstorage.IsNotFound(err) {
+		return 0, nil
+	}
+	return f.Epoch, err
+}

@@ -8,6 +8,9 @@ is no central control cluster. Clusters can join and leave. The demo
 uses a pool of devices: each cluster can lease a device, and a device is
 bound to at most one claim at a time. Fencing tokens stop a cluster that
 paused from using a device that another cluster now holds.
+Fencing works only where something checks the token: the demo device
+does, but an actuator such as MAAS needs a gatekeeper in front of it
+(ADR 0017). Without one, fencing does not protect the devices it drives.
 
 - [The demo](demo/k3d/README.md): two clusters, a race for a device, a
   reclaim, and fencing. Run it with `devbox run demo`.

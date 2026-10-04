@@ -195,7 +195,7 @@ func (d *Driver) apply(step Step, prev State) error {
 		}
 		return nil
 
-	case "sweepClear", "release", "drainRelease", "releaseDuplicate", "clearOrphan":
+	case "sweepClear", "release", "drainRelease", "releaseDuplicate", "clearOrphan", "operatorRelease":
 		dev := step.Pick("d")
 		return d.writeRef(dev, prev.Devices[dev].RV, cur.Devices[dev].RV, nil, true)
 	}

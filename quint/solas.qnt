@@ -11,7 +11,8 @@ module solas {
 
   // token is the fencing token of the last bind, spec 5.3.
   // preempt is a preemption request, spec 10.5.
-  type Device = { rv: int, ref: OptRef, token: int, preempt: OptRef }
+  // offer is a transfer offer to a named claim, spec 14.
+  type Device = { rv: int, ref: OptRef, token: int, preempt: OptRef, offer: OptRef }
 
   // A Member object in the table, spec 7.1.
   type MemberObj = { exists: bool, uid: int, rv: int }
@@ -48,6 +49,13 @@ module solas {
     renewRv: int,
     draining: bool,
     seen: str -> Seen,
+    // lastRead is the local time of the last read of the member list that
+    // worked, spec 8.1.
+    lastRead: int,
+    // stale holds, for each device, the member UID of a holder that the
+    // sweeper found gone, and the local time at which it first did, for
+    // the reclaim time of Delay, spec 8.5.
+    stale: str -> { muid: int, at: int },
     sweepPhase: int,
     sweepDevs: str -> Device,
     sweepUids: Set[int],
@@ -91,6 +99,14 @@ module solas {
     // none. The negative model no-token-raise sets it.
     version: str -> int,
     skipTokenVersion: int,
+    // readGap is how long an observer may go without a read of the member
+    // list before it forgets what it saw, spec 8.1. 0 turns it off; the
+    // negative model outage-sweep does that.
+    readGap: int,
+    // reclaim is the reclaim policy of each device: Delete, Delay, or
+    // Retain, spec 8.5. reclaimDelay is the reclaim time R of Delay.
+    reclaim: str -> str,
+    reclaimDelay: int,
   }
 
   type State = {
@@ -114,6 +130,9 @@ module solas {
     bindings: Set[Binding],
     staleAccepted: bool,
     staleRejected: bool,
+    // Ghost: true once the sweeper cleared a device with the Retain
+    // policy, spec 8.5. The invariant retainNeverSwept keeps it false.
+    sweptRetained: bool,
   }
 
   const CFG: Config
@@ -135,14 +154,16 @@ module solas {
     renewRv: 0,
     draining: false,
     seen: cfg.clusters.mapBy(_ => NOSEEN),
+    lastRead: cfg.clock0.get(c),
+    stale: cfg.devices.mapBy(_ => { muid: -1, at: 0 }),
     sweepPhase: 0,
-    sweepDevs: cfg.devices.mapBy(_ => { rv: 0, ref: Free, token: 0, preempt: Free }),
+    sweepDevs: cfg.devices.mapBy(_ => { rv: 0, ref: Free, token: 0, preempt: Free, offer: Free }),
     sweepUids: Set(),
   }
 
   action init = s' = {
     now: 0,
-    devices: CFG.devices.mapBy(_ => { rv: 0, ref: Free, token: 0, preempt: Free }),
+    devices: CFG.devices.mapBy(_ => { rv: 0, ref: Free, token: 0, preempt: Free, offer: Free }),
     devCounter: 0,
     members: CFG.clusters.mapBy(_ => { exists: false, uid: 0, rv: 0 }),
     memberCounter: 0,
@@ -160,6 +181,7 @@ module solas {
     bindings: Set(),
     staleAccepted: false,
     staleRejected: false,
+    sweptRetained: false,
   }
 
   // ---- Time, spec 7.5 ----
@@ -221,7 +243,7 @@ module solas {
     s.claims.keys().mapBy(k => {
       val cm = s.claims.get(k)
       if (CFG.owner.get(k) == c
-          and cm.phase.in(Set("Bound", "Suspended", "Preempting", "Preempted"))
+          and cm.phase.in(Set("Bound", "Suspended", "Preempting", "Preempted", "Transferring"))
           and cm.muid != uid)
         { ...cm, phase: "Lost" }
       else cm
@@ -338,6 +360,7 @@ module solas {
           renewInFlight: false,
           draining: false,
           seen: CFG.clusters.mapBy(_ => NOSEEN),
+          stale: CFG.devices.mapBy(_ => { muid: -1, at: 0 }),
           sweepPhase: 0,
         }),
       },
@@ -352,13 +375,35 @@ module solas {
     val cl = s.clusters.get(c)
     val mo = s.members.get(m)
     val now = if (mo.exists) { rv: mo.rv, at: cl.clock } else NOSEEN
+    val seen = afterGap(cl).set(m, now)
     all {
       active(cl),
       m != c,
       cl.seen.get(m).rv != now.rv,
       s' = {
         ...s,
-        clusters: s.clusters.set(c, { ...cl, seen: cl.seen.set(m, now) }),
+        clusters: s.clusters.set(c, { ...cl, seen: seen, lastRead: cl.clock }),
+      },
+    }
+  }
+
+  // An observer that went longer than readGap without a read of the member
+  // list forgets what it saw, and measures again from its next read. So
+  // after a store outage it waits a full D from the return, spec 8.1.
+  def afterGap(cl: Cluster): str -> Seen =
+    if (CFG.readGap > 0 and cl.clock > cl.lastRead + CFG.readGap)
+      cl.seen.keys().mapBy(_ => NOSEEN)
+    else cl.seen
+
+  // A read of the member list that works and shows no change, spec 8.1.
+  action readMembers(c: str): bool = {
+    val cl = s.clusters.get(c)
+    all {
+      active(cl),
+      cl.lastRead != cl.clock,
+      s' = {
+        ...s,
+        clusters: s.clusters.set(c, { ...cl, seen: afterGap(cl), lastRead: cl.clock }),
       },
     }
   }
@@ -374,6 +419,8 @@ module solas {
       m != c,
       seen.rv >= 0,
       cl.clock >= seen.at + CFG.D,
+      // The observer read the member list a short time ago, spec 8.1.
+      CFG.readGap == 0 or cl.clock <= cl.lastRead + CFG.readGap,
       mo.exists,
       mo.rv == seen.rv,
       s' = {
@@ -429,18 +476,57 @@ module solas {
     val cl = s.clusters.get(c)
     val listed = cl.sweepDevs.get(d)
     val rv = s.devCounter + 1
+    val st = cl.stale.get(d)
+    val policy = CFG.reclaim.get(d)
     all {
       active(cl),
       cl.sweepPhase == 2,
       not(isFree(listed.ref)),
       not(cl.sweepUids.contains(refMuid(listed.ref))),
       s.devices.get(d).rv == listed.rv,
+      // The reclaim policy of the device, spec 8.5. Delete clears at once.
+      // Delay clears R after this sweeper first found the holder gone, by
+      // its own clock. Retain never lets the sweeper clear.
+      policy == "Delete"
+        or (policy == "Delay" and st.muid == refMuid(listed.ref) and cl.clock >= st.at + CFG.reclaimDelay),
       s' = {
         ...s,
-        devices: s.devices.set(d, { ...s.devices.get(d), rv: rv, ref: Free }),
+        devices: s.devices.set(d, { ...s.devices.get(d), rv: rv, ref: Free, offer: Free }),
         devCounter: rv,
         cleared: true,
+        sweptRetained: s.sweptRetained or policy == "Retain",
       },
+    }
+  }
+
+  // The sweeper records when it first found the holder of a device gone,
+  // for the reclaim time of Delay, spec 8.5.
+  action markStale(c: str, d: str): bool = {
+    val cl = s.clusters.get(c)
+    val listed = cl.sweepDevs.get(d)
+    all {
+      active(cl),
+      cl.sweepPhase == 2,
+      not(isFree(listed.ref)),
+      not(cl.sweepUids.contains(refMuid(listed.ref))),
+      cl.stale.get(d).muid != refMuid(listed.ref),
+      s' = {
+        ...s,
+        clusters: s.clusters.set(c, { ...cl, stale: cl.stale.set(d, { muid: refMuid(listed.ref), at: cl.clock }) }),
+      },
+    }
+  }
+
+  // An operator releases a retained device whose holder's member is gone,
+  // spec 8.5. The release is one conditional write, as any clear is.
+  action operatorRelease(d: str): bool = {
+    val dv = s.devices.get(d)
+    val rv = s.devCounter + 1
+    all {
+      CFG.reclaim.get(d) == "Retain",
+      not(isFree(dv.ref)),
+      not(liveUids(s.members).contains(refMuid(dv.ref))),
+      s' = { ...s, devices: s.devices.set(d, { ...dv, rv: rv, ref: Free, offer: Free }), devCounter: rv, cleared: true },
     }
   }
 
@@ -866,6 +952,169 @@ module solas {
     }
   }
 
+  // ---- Transfer, spec 14 ----
+
+  // The holder starts a transfer. Its claim stops being in effect before
+  // it offers the device, so its workload stops first, spec 14.1.
+  action startTransfer(k: str): bool = {
+    val cl = s.clusters.get(CFG.owner.get(k))
+    val cm = s.claims.get(k)
+    all {
+      active(cl),
+      cm.exists,
+      not(cm.deleting),
+      cm.phase == "Bound",
+      s' = { ...s, claims: s.claims.set(k, { ...cm, phase: "Transferring" }) },
+    }
+  }
+
+  // The holder offers its device to claim t of another cluster, with a
+  // conditional write, spec 14.1. The offer names t and the member UID of
+  // t's cluster.
+  action offer(k: str, t: str): bool = {
+    val cm = s.claims.get(k)
+    val d = cm.dev
+    val dv = s.devices.get(d)
+    val tc = s.clusters.get(CFG.owner.get(t))
+    val rv = s.devCounter + 1
+    all {
+      active(s.clusters.get(CFG.owner.get(k))),
+      cm.phase == "Transferring",
+      CFG.owner.get(t) != CFG.owner.get(k),
+      tc.uid != 0,
+      namesWith(dv.ref, k, cm.muid),
+      isFree(dv.offer),
+      isFree(dv.preempt),
+      s' = {
+        ...s,
+        devices: s.devices.set(d, { ...dv, rv: rv,
+          offer: Held({ member: CFG.owner.get(t), muid: tc.uid, claim: t, prio: CFG.priority.get(t) }) }),
+        devCounter: rv,
+      },
+    }
+  }
+
+  // The named claim binds against the offer in one write: claimRef moves
+  // to it, the token goes up, and the offer goes, spec 14.2. The device is
+  // never free, so no third claim can take it. adopt then sets the claim
+  // Bound, as after any bind.
+  action bindOffer(t: str, d: str): bool = {
+    val c = CFG.owner.get(t)
+    val cl = s.clusters.get(c)
+    val dv = s.devices.get(d)
+    val rv = s.devCounter + 1
+    val ref = Held({ member: c, muid: cl.uid, claim: t, prio: CFG.priority.get(t) })
+    all {
+      active(cl),
+      cl.uid != 0,
+      not(cl.draining),
+      s.claims.get(t).exists,
+      s.claims.get(t).phase == "Pending",
+      namesWith(dv.offer, t, cl.uid),
+      not(isFree(dv.ref)),
+      s' = {
+        ...s,
+        devices: s.devices.set(d, { ...dv, rv: rv, ref: ref, token: dv.token + 1, offer: Free }),
+        devCounter: rv,
+        bindings: s.bindings.union(Set({ dev: d, token: dv.token + 1, claim: t })),
+      },
+    }
+  }
+
+  // The holder withdraws an offer that nobody bound, and its claim is in
+  // effect again, spec 14.3. The write is conditional, so a withdraw and a
+  // bind against the offer cannot both succeed.
+  action withdrawOffer(k: str): bool = {
+    val cm = s.claims.get(k)
+    val dv = s.devices.get(cm.dev)
+    val rv = s.devCounter + 1
+    all {
+      active(s.clusters.get(CFG.owner.get(k))),
+      cm.phase == "Transferring",
+      namesWith(dv.ref, k, cm.muid),
+      s' = {
+        ...s,
+        devices: s.devices.set(cm.dev, { ...dv, rv: rv, offer: Free }),
+        devCounter: rv,
+        claims: s.claims.set(k, { ...cm, phase: "Bound" }),
+      },
+    }
+  }
+
+  // The old claim sees that its device names another claim, and lets go
+  // without a write to the device, spec 14.2.
+  action transferDone(k: str): bool = {
+    val cm = s.claims.get(k)
+    all {
+      active(s.clusters.get(CFG.owner.get(k))),
+      cm.phase == "Transferring",
+      not(names(s.devices.get(cm.dev).ref, k)),
+      s' = { ...s, claims: s.claims.set(k, { ...cm, phase: "Pending", dev: "" }) },
+    }
+  }
+
+  // A sweeper clears an offer to a member UID that is not in the member
+  // list, as it does for a request, spec 14.3.
+  action sweepClearOffer(c: str, d: str): bool = {
+    val cl = s.clusters.get(c)
+    val listed = cl.sweepDevs.get(d)
+    val dv = s.devices.get(d)
+    val rv = s.devCounter + 1
+    all {
+      active(cl),
+      cl.sweepPhase == 2,
+      not(isFree(listed.offer)),
+      not(cl.sweepUids.contains(refMuid(listed.offer))),
+      dv.rv == listed.rv,
+      s' = { ...s, devices: s.devices.set(d, { ...dv, rv: rv, offer: Free }), devCounter: rv },
+    }
+  }
+
+  // ---- Recovery of a Lost claim, spec 14.5 ----
+
+  // A member that joined again with a new UID takes back a device that
+  // still names one of its claims under its old, gone member UID. One
+  // conditional write moves claimRef to the new UID and raises the token,
+  // so the old identity is fenced. The device is never free.
+  action recoverWrite(k: str, d: str): bool = {
+    val c = CFG.owner.get(k)
+    val cl = s.clusters.get(c)
+    val dv = s.devices.get(d)
+    val old = refMuid(dv.ref)
+    val rv = s.devCounter + 1
+    all {
+      active(cl),
+      cl.uid != 0,
+      not(cl.draining),
+      localLive(c),
+      s.claims.get(k).exists,
+      s.claims.get(k).phase == "Lost",
+      names(dv.ref, k),
+      old != cl.uid,
+      not(liveUids(s.members).contains(old)),
+      s' = {
+        ...s,
+        devices: s.devices.set(d, { ...dv, rv: rv, ref: Held({ member: c, muid: cl.uid, claim: k, prio: CFG.priority.get(k) }),
+          token: dv.token + 1, offer: Free }),
+        devCounter: rv,
+        bindings: s.bindings.union(Set({ dev: d, token: dv.token + 1, claim: k })),
+      },
+    }
+  }
+
+  // The claim is in effect again once its device names it with the current
+  // member UID.
+  action recoverDone(k: str, d: str): bool = {
+    val cl = s.clusters.get(CFG.owner.get(k))
+    val cm = s.claims.get(k)
+    all {
+      active(cl),
+      cm.phase == "Lost",
+      namesWith(s.devices.get(d).ref, k, cl.uid),
+      s' = { ...s, claims: s.claims.set(k, { ...cm, phase: "Bound", dev: d, muid: cl.uid, token: s.devices.get(d).token }) },
+    }
+  }
+
   // ---- Invariants, spec 8.4 ----
 
   // A request always beats the holder of its device, spec 10.5.
@@ -921,7 +1170,11 @@ module solas {
 
   val fencing = tokensUnique and usesInOrder and useMatchesBinding
 
+  // The sweeper never clears a device with the Retain policy, spec 8.5.
+  val retainNeverSwept = not(s.sweptRetained)
+
   val safety = noDoubleBind and claimMatchesDevice and leaseSafety and fencing and requestBeatsHolder
+    and retainNeverSwept
 
   // ---- Witnesses ----
   // Each witness must be violated in a run. A violation shows that the
@@ -931,11 +1184,14 @@ module solas {
   val witnessCleared = not(s.cleared)
   val witnessLost = CFG.claims.forall(k => s.claims.get(k).phase != "Lost")
   val witnessLeft = not(s.someLeft)
+  // A retained device still names a holder whose member is gone, spec 8.5.
+  val witnessRetained = not(CFG.devices.exists(d => CFG.reclaim.get(d) == "Retain"
+    and not(isFree(s.devices.get(d).ref)) and not(liveUids(s.members).contains(refMuid(s.devices.get(d).ref)))))
   // A device rejects a use with a stale token. Random runs rarely reach
   // it, so fencingTest plays it step by step.
   val witnessStaleRejected = not(s.staleRejected)
 
-  action step = any {
+  action baseStep = any {
     nondet c = CFG.clusters.oneOf()
     nondet m = CFG.clusters.oneOf()
     nondet d = CFG.devices.oneOf()
@@ -969,13 +1225,37 @@ module solas {
       crash(c),
       recover(c),
       observe(c, m),
+      readMembers(c),
       sweepDelete(c, m),
       sweepListDevices(c),
       sweepListMembers(c),
       sweepClear(c, d),
+      markStale(c, d),
+      operatorRelease(d),
       sweepDone(c),
     },
   }
+
+  // The transfer of spec 14. The model-based tests replay baseStep only,
+  // until the server has the transfer.
+  action transferStep = {
+    nondet c = CFG.clusters.oneOf()
+    nondet d = CFG.devices.oneOf()
+    nondet k = CFG.claims.oneOf()
+    nondet t = CFG.claims.oneOf()
+    any {
+      startTransfer(k),
+      offer(k, t),
+      bindOffer(k, d),
+      withdrawOffer(k),
+      transferDone(k),
+      sweepClearOffer(c, d),
+      recoverWrite(k, d),
+      recoverDone(k, d),
+    }
+  }
+
+  action step = any { baseStep, transferStep }
 
   // A step with no faults and no leave, for model-based tests. Random
   // traces of step rarely bind two claims, so they rarely reach a
@@ -1026,6 +1306,9 @@ module solas2 {
     noPreemptionWait: false,
     version: Map("a" -> 1, "b" -> 2),
     skipTokenVersion: 0,
+    readGap: 15,
+    reclaim: Map("d1" -> "Delete", "d2" -> "Retain"),
+    reclaimDelay: 20,
   }).*
 
   pure val fastB = Map("a" -> 0, "b" -> 1)
@@ -1049,9 +1332,9 @@ module solas2 {
       .then(adopt("a1", "d1"))
       .then(observe("b", "a"))
       .then(crash("a"))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
       .then(sweepDelete("b", "a"))
       .then(sweepListDevices("b"))
       .then(sweepListMembers("b"))
@@ -1069,9 +1352,9 @@ module solas2 {
       .then(bindSend("a1", "d1"))
       .then(bindLand({ cluster: "a", claim: "a1", dev: "d1", rv: 0, muid: 1 }))
       .then(observe("b", "a"))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
       .then(sweepDelete("b", "a"))
       .then(renewSend("a"))
       .then(renewLand("a"))
@@ -1089,9 +1372,9 @@ module solas2 {
       .then(adopt("a1", "d1"))
       .then(use("a1"))
       .then(observe("b", "a"))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
       .then(sweepDelete("b", "a"))
       .then(sweepListDevices("b"))
       .then(sweepListMembers("b"))
@@ -1161,9 +1444,9 @@ module solas2 {
     allHeld
       .then(requestPreemption("b1", "d1"))
       .then(observe("b", "a"))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
       .then(sweepDelete("b", "a"))
       .then(sweepListDevices("b"))
       .then(sweepListMembers("b"))
@@ -1185,9 +1468,9 @@ module solas2 {
       .then(seePreemption("a2"))
       .then(observe("b", "a"))
       .then(crash("a"))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
-      .then(tickBy(fastB))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
       .then(sweepDelete("b", "a"))
       .then(sweepListDevices("b"))
       .then(sweepListMembers("b"))
@@ -1195,4 +1478,189 @@ module solas2 {
       .then(recover("a"))
       .then(join("a"))
       .expect(safety and s.claims.get("a2").phase == "Lost")
+
+  // The store is down for longer than D: no read and no write works while
+  // the clocks go on. b saw a's Member before the outage, spec 8.1.
+  run outage =
+    init
+      .then(join("a"))
+      .then(join("b"))
+      .then(observe("b", "a"))
+      .then(tickBy(fastB))
+      .then(tickBy(fastB))
+      .then(tickBy(fastB))
+
+  // When the store returns, b cannot sweep a at once: its reads are not
+  // fresh, and its first read starts the measurement again.
+  run outageNoSweepTest = outage.then(sweepDelete("b", "a").fail())
+  run outageFirstReadTest = outage.then(readMembers("b")).then(sweepDelete("b", "a").fail())
+
+  // a renews after the outage and keeps its Member.
+  run outageRenewTest =
+    outage
+      .then(readMembers("b"))
+      .then(renewSend("a"))
+      .then(renewLand("a"))
+      .then(observe("b", "a"))
+      .expect(s.members.get("a").exists and safety)
+
+  // A member that stops for good is still swept, a full D after the store
+  // returns.
+  run outageStillSweptTest =
+    outage
+      .then(crash("a"))
+      .then(readMembers("b"))
+      .then(observe("b", "a"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(sweepDelete("b", "a"))
+      .expect(not(s.members.get("a").exists) and safety)
+
+  // a holds the retained d2 and crashes. b sweeps a's Member, but it cannot
+  // clear d2, spec 8.5.
+  run retainedHeld =
+    init
+      .then(join("a"))
+      .then(bindSend("a1", "d2"))
+      .then(bindLand({ cluster: "a", claim: "a1", dev: "d2", rv: 0, muid: 1 }))
+      .then(adopt("a1", "d2"))
+      .then(join("b"))
+      .then(observe("b", "a"))
+      .then(crash("a"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(sweepDelete("b", "a"))
+      .then(sweepListDevices("b"))
+      .then(sweepListMembers("b"))
+      .expect(not(isFree(s.devices.get("d2").ref)) and safety)
+
+  run retainNoSweepTest = retainedHeld.then(sweepClear("b", "d2").fail())
+
+  // An operator releases d2, and b1 can bind it.
+  run operatorReleaseTest =
+    retainedHeld
+      .then(operatorRelease("d2"))
+      .expect(isFree(s.devices.get("d2").ref) and safety)
+
+  // a2 holds d1. a starts a transfer of d1 to b1, spec 14.
+  run offered =
+    init
+      .then(join("a"))
+      .then(bindSend("a2", "d1"))
+      .then(bindLand({ cluster: "a", claim: "a2", dev: "d1", rv: 0, muid: 1 }))
+      .then(adopt("a2", "d1"))
+      .then(join("b"))
+      .then(startTransfer("a2"))
+      .expect(not(effective("a2")) and safety)
+      .then(offer("a2", "b1"))
+      .expect(names(s.devices.get("d1").offer, "b1") and safety)
+
+  // b1 binds against the offer: d1 names b1 with token 2 in one write, and
+  // a2 lets go without a write.
+  run transferTest =
+    offered
+      .then(bindOffer("b1", "d1"))
+      .then(adopt("b1", "d1"))
+      .then(transferDone("a2"))
+      .expect(s.claims.get("b1").phase == "Bound" and s.devices.get("d1").token == 2
+        and s.claims.get("a2").phase == "Pending" and isFree(s.devices.get("d1").offer) and safety)
+
+  // While the offer stands, a third claim cannot bind d1: a1 sent its bind
+  // before a2 took d1, and the bind lands during the offer.
+  run offerThirdClaimTest =
+    init
+      .then(join("a"))
+      .then(bindSend("a1", "d1"))
+      .then(bindSend("a2", "d1"))
+      .then(bindLand({ cluster: "a", claim: "a2", dev: "d1", rv: 0, muid: 1 }))
+      .then(adopt("a2", "d1"))
+      .then(join("b"))
+      .then(startTransfer("a2"))
+      .then(offer("a2", "b1"))
+      .then(bindLand({ cluster: "a", claim: "a1", dev: "d1", rv: 0, muid: 1 }))
+      .expect(names(s.devices.get("d1").ref, "a2") and names(s.devices.get("d1").offer, "b1") and safety)
+
+  // a withdraws the offer: a2 is in effect again, and b1 can no longer bind.
+  run withdrawn = offered.then(withdrawOffer("a2"))
+    .expect(effective("a2") and isFree(s.devices.get("d1").offer) and safety)
+  run withdrawTest = withdrawn.then(bindOffer("b1", "d1").fail())
+
+  // a comes back with a new UID after b swept it, and a1 is Lost. d2 is
+  // retained, so it still names a1 under a's old UID. a recovers d2: the
+  // token goes up, and a1 is Bound again, spec 14.5.
+  run lostWithDevice =
+    retainedHeld
+      .then(recover("a"))
+      .then(join("a"))
+      .expect(s.claims.get("a1").phase == "Lost" and safety)
+
+  run recoveryTest =
+    lostWithDevice
+      .then(recoverWrite("a1", "d2"))
+      .then(recoverDone("a1", "d2"))
+      .expect(s.claims.get("a1").phase == "Bound" and effective("a1") and s.devices.get("d2").token == 2
+        and s.claims.get("a1").token == 2 and safety)
+
+  // A plain adopt cannot take d2, because it names the old member UID.
+  run recoveryNotByAdoptTest = lostWithDevice.then(adopt("a1", "d2").fail())
+}
+
+// solas2 with d2 under the Delay policy: the sweeper clears it only R = 20
+// after it first found the holder gone, by its own clock, spec 8.5.
+module solas2delay {
+  import solas(CFG = {
+    clusters: Set("a", "b"),
+    devices: Set("d1", "d2"),
+    claims: Set("a1", "a2", "b1"),
+    owner: Map("a1" -> "a", "a2" -> "a", "b1" -> "b"),
+    clock0: Map("a" -> 0, "b" -> 1000),
+    D: 30,
+    M: 6,
+    tick: 10,
+    drift: 1,
+    unconditionalBind: false,
+    membersFirst: false,
+    adoptAnyUid: false,
+    noTokenCheck: false,
+    priority: Map("a1" -> 1, "a2" -> 0, "b1" -> 2),
+    preemptible: Map("d1" -> true, "d2" -> false),
+    grace: 20,
+    forceClear: false,
+    noPreemptionWait: false,
+    version: Map("a" -> 1, "b" -> 2),
+    skipTokenVersion: 0,
+    readGap: 15,
+    reclaim: Map("d1" -> "Delete", "d2" -> "Delay"),
+    reclaimDelay: 20,
+  }).*
+
+  pure val fastB = Map("a" -> 0, "b" -> 1)
+
+  run delayedHeld =
+    init
+      .then(join("a"))
+      .then(bindSend("a1", "d2"))
+      .then(bindLand({ cluster: "a", claim: "a1", dev: "d2", rv: 0, muid: 1 }))
+      .then(adopt("a1", "d2"))
+      .then(join("b"))
+      .then(observe("b", "a"))
+      .then(crash("a"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(tickBy(fastB)).then(readMembers("b"))
+      .then(sweepDelete("b", "a"))
+      .then(sweepListDevices("b"))
+      .then(sweepListMembers("b"))
+      .then(markStale("b", "d2"))
+
+  run delayNotYetTest = delayedHeld.then(sweepClear("b", "d2").fail())
+
+  run delayClearTest =
+    delayedHeld
+      .then(tickBy(fastB))
+      .then(tickBy(fastB))
+      .then(sweepClear("b", "d2"))
+      .expect(isFree(s.devices.get("d2").ref) and safety)
 }

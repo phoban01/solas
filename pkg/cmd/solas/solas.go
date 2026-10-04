@@ -47,7 +47,7 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	cmd.Use = "solas"
 	cmd.Short = "Serve the solas.dev API from DynamoDB and run the member controller"
 	o.Controller.AddFlags(cmd.Flags())
-	cmd.AddCommand(newMigrateCommand(), newUnsealCommand(), newFinalizeCommand())
+	cmd.AddCommand(newMigrateCommand(), newUnsealCommand(), newFinalizeCommand(), newReleaseCommand(), newRestoreEpochCommand())
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
 		if err := errors.Join(o.Server.Validate(), o.Controller.Validate()); err != nil {
 			return err
@@ -134,6 +134,11 @@ func checkFormat(ctx context.Context, s *migrate.Store) error {
 			f, format.Min, format.Max)
 	}
 	format.SetFinalized(f)
+	e, err := s.Epoch(ctx)
+	if err != nil {
+		return fmt.Errorf("read the store epoch: %w", err)
+	}
+	format.SetEpoch(e)
 	return nil
 }
 

@@ -34,7 +34,7 @@ func TestTableColumns(t *testing.T) {
 	if want := []string{"Name", "Ready", "Member", "Claim", "Age"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("default columns = %v, want %v", names, want)
 	}
-	if want := []string{"Preemptible", "Preemption"}; !reflect.DeepEqual(wide, want) {
+	if want := []string{"Preemptible", "Preemption", "Reclaim"}; !reflect.DeepEqual(wide, want) {
 		t.Errorf("wide columns = %v, want %v", wide, want)
 	}
 	cells := func(i int) []any { c := table.Rows[i].Cells; return []any{c[0], c[1], c[2], c[3], c[5], c[6]} }

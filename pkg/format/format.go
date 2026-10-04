@@ -49,3 +49,27 @@ func Behind(members []Member, n int32) []string {
 	sort.Strings(out)
 	return out
 }
+
+// epoch is the epoch of the store, spec 13.1. The server reads it with
+// the finalized format.
+var epoch atomic.Int64
+
+// SetEpoch records the epoch that the server read.
+func SetEpoch(e int64) { epoch.Store(e) }
+
+// Epoch returns the epoch of the store.
+func Epoch() int64 { return epoch.Load() }
+
+//= spec/solas.md#13-2-fencing-tokens
+//# When a status update sets `claimRef` on a free device whose token is
+//# below `epoch * 2^32`, the server MUST set the token to `epoch * 2^32 + 1`.
+
+// NextToken returns the token of a bind of a free device with token old,
+// in epoch e. The epoch sits in the high 32 bits, so the first bind of a
+// new epoch starts above every token of the epochs before, spec 13.2.
+func NextToken(old, e int64) int64 {
+	if base := e << 32; old < base {
+		return base + 1
+	}
+	return old + 1
+}

@@ -21,6 +21,9 @@ type Settings struct {
 	Lease  time.Duration
 	Margin time.Duration
 	Sweep  time.Duration
+	// ReadGap is the read gap G of the sweepers, spec 8.1. Zero means the
+	// default.
+	ReadGap time.Duration
 }
 
 // cluster is one member cluster. Its controllers are the real ones.
@@ -78,7 +81,7 @@ func (c *cluster) build() {
 	c.orphans = &claim.Orphans{Reconciler: c.claims}
 	c.sweeper = &sweeper.Sweeper{
 		Client: c.client, Reader: c.client, ClusterID: c.name,
-		Clock: c.clock, Interval: c.settings.Sweep,
+		Clock: c.clock, Interval: c.settings.Sweep, ReadGap: c.settings.ReadGap,
 	}
 }
 

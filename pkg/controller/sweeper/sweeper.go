@@ -32,9 +32,17 @@ type Sweeper struct {
 	ClusterID string
 	Clock     clock.PassiveClock
 	Interval  time.Duration
+	// ReadGap is the read gap G of spec 8.1. Zero means twice Interval.
+	ReadGap time.Duration
 
 	mu   sync.Mutex
 	seen map[string]observation
+	// stale holds, for each device under the Delay policy, the member UID
+	// of the gone holder and the local time of the first sweep that found
+	// it gone, spec 8.5.
+	stale map[string]observation
+	// lastRead is the local time of the last member list that worked.
+	lastRead time.Time
 }
 
 //= spec/solas.md#8-1-expiry-on-the-observer
@@ -72,6 +80,23 @@ func (s *Sweeper) expire(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	//= spec/solas.md#8-1-expiry-on-the-observer
+	//# An observer MUST count only time during which it reads the member list.
+
+	//= spec/solas.md#8-1-expiry-on-the-observer
+	//# When the observer has not read the member list for longer than the read
+	//# gap `G`, it MUST forget the local times that it recorded, and record
+	//# them again from its next read.
+	//
+	// The list above worked. After a gap, as in a store outage, the
+	// observations start again, so no member counts as expired before it
+	// had D to renew. The deletes below run right after this read, so they
+	// keep the rule that the last read is at most G old.
+	now := s.Clock.Now()
+	if !s.lastRead.IsZero() && now.Sub(s.lastRead) > s.readGap() {
+		s.seen = nil
+	}
+	s.lastRead = now
 	if s.seen == nil {
 		s.seen = map[string]observation{}
 	}
@@ -163,7 +188,7 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 	for i := range devices.Items {
 		d := &devices.Items[i]
 		ref := d.Status.ClaimRef
-		if ref == nil || live[ref.MemberUID] {
+		if ref == nil || live[ref.MemberUID] || !s.mayReclaim(d, ref.MemberUID) {
 			continue
 		}
 		//= spec/solas.md#8-3-clear-stale-claim-references
@@ -179,6 +204,9 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 		switch {
 		case err == nil:
 			log.FromContext(ctx).Info("freed a device of a gone member", "device", d.Name, "member", ref.Member)
+			s.mu.Lock()
+			delete(s.stale, d.Name)
+			s.mu.Unlock()
 		case apierrors.IsConflict(err), apierrors.IsNotFound(err):
 			//= spec/solas.md#8-3-clear-stale-claim-references
 			//# If the clear fails with `409 Conflict`, the sweeper MUST skip the device
@@ -188,4 +216,56 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+//= spec/solas.md#8-1-expiry-on-the-observer
+//# The default `G` is twice the sweep interval.
+
+func (s *Sweeper) readGap() time.Duration {
+	if s.ReadGap > 0 {
+		return s.ReadGap
+	}
+	return 2 * s.Interval
+}
+
+//= spec/solas.md#8-5-reclaim-policy
+//# Under `Delete`, the sweeper MUST clear the `claimRef` as section 8.3
+//# describes.
+
+//= spec/solas.md#8-5-reclaim-policy
+//# Under `Delay`, the sweeper MUST NOT clear the `claimRef` until the
+//# reclaim time `R` of the device has passed.
+
+//= spec/solas.md#8-5-reclaim-policy
+//# The sweeper MUST measure `R` on its own clock, from its first sweep that
+//# found the holder gone.
+
+//= spec/solas.md#8-5-reclaim-policy
+//# Under `Retain`, the sweeper MUST NOT clear the `claimRef`.
+
+// mayReclaim reports whether the reclaim policy of d lets the sweeper
+// clear its claimRef now. The holder, uid, is gone.
+func (s *Sweeper) mayReclaim(d *solasv1alpha1.Device, uid types.UID) bool {
+	switch d.Spec.ReclaimPolicy {
+	case solasv1alpha1.ReclaimRetain:
+		return false
+	case solasv1alpha1.ReclaimDelay:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.stale == nil {
+			s.stale = map[string]observation{}
+		}
+		now := s.Clock.Now()
+		ob, ok := s.stale[d.Name]
+		if !ok || ob.uid != uid {
+			ob = observation{uid: uid, at: now}
+			s.stale[d.Name] = ob
+		}
+		var r time.Duration
+		if d.Spec.ReclaimDelaySeconds != nil {
+			r = time.Duration(*d.Spec.ReclaimDelaySeconds) * time.Second
+		}
+		return now.Sub(ob.at) >= r
+	}
+	return true
 }

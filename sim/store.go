@@ -37,6 +37,9 @@ type router struct {
 	rng  *rand.Rand
 	lag  float64
 	last *solasv1alpha1.DeviceList
+	// outage points at the outage flag of the world. While it is true,
+	// every call to the shared store fails.
+	outage *bool
 }
 
 // newRouter returns the client that one cluster's controllers use.
@@ -49,6 +52,9 @@ func (r *router) pick(o runtime.Object) client.Client {
 	case *claimsv1alpha1.DeviceClaim, *claimsv1alpha1.DeviceClaimList:
 		return r.local
 	}
+	if r.outage != nil && *r.outage {
+		return down{}
+	}
 	return r.Client
 }
 
@@ -57,6 +63,9 @@ func (r *router) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 }
 
 func (r *router) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, local := list.(*claimsv1alpha1.DeviceClaimList); !local && r.outage != nil && *r.outage {
+		return errStoreDown
+	}
 	if dl, ok := list.(*solasv1alpha1.DeviceList); ok && r.rng != nil {
 		if r.last != nil && r.rng.Float64() < r.lag {
 			r.last.DeepCopyInto(dl)

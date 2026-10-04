@@ -17,7 +17,7 @@ trap 'rm -rf "$dir"' EXIT
 count=${MBT_COUNT:-40}
 seed=${MBT_SEED:-0x5eed}
 
-quint run quint/solas.qnt --main solas2 --mbt \
+quint run quint/solas.qnt --main solas2 --step baseStep --mbt \
   --max-steps "${MBT_STEPS:-30}" --max-samples "$count" --n-traces "$count" \
   --seed "$seed" --out-itf "$dir/trace{seq}.itf.json" >/dev/null
 quint run quint/solas.qnt --main solas2 --step calmStep --mbt \

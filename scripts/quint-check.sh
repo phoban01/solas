@@ -55,7 +55,9 @@ for f in quint/*.qnt quint/negative/*.qnt; do
 done
 
 pass "test solas2" quint test quint/solas.qnt --main solas2
+pass "test solas2delay" quint test quint/solas.qnt --main solas2delay
 pass "test migrate2" quint test quint/migrate.qnt --main migrate2
+pass "test restore2" quint test quint/restore.qnt --main restore2
 # The test passes when its scenario breaks claimMatchesDevice.
 pass "negative adopt-any-uid" quint test quint/negative/adopt-any-uid.qnt \
   --main adopt_any_uid
@@ -66,6 +68,14 @@ pass "negative no-token-check" quint test quint/negative/no-token-check.qnt \
 # claimMatchesDevice.
 # The test passes when a release that does not raise the token breaks
 # tokensUnique, spec 11.2.
+# The test passes when an observer that keeps its observations across a
+# store outage sweeps a member right after it, spec 8.1.
+pass "negative outage-sweep" quint test quint/negative/outage-sweep.qnt \
+  --main outage_sweep --match sweepOnReturnTest
+# The test passes when a restore that keeps the old epoch sends a token
+# back, spec 13.
+pass "negative no-epoch" quint test quint/negative/no-epoch.qnt \
+  --main no_epoch --match tokenBackTest
 pass "negative no-token-raise" quint test quint/negative/no-token-raise.qnt \
   --main no_token_raise --match tokenRaiseTest
 pass "negative force-clear" quint test quint/negative/force-clear.qnt \
@@ -80,10 +90,16 @@ pass "run solas2 safety" run quint/solas.qnt --main solas2 --invariant safety
 pass "run no-margin fencing" run quint/negative/no-margin.qnt --invariant fencing
 pass "run store3 storeSafety" run quint/store.qnt --main store3 --invariant storeSafety
 pass "run migrate2 migrateSafety" run quint/migrate.qnt --main migrate2 --invariant migrateSafety
+pass "run restore2 tokenOrder" run quint/restore.qnt --main restore2 --invariant tokenOrder
 
-for w in witnessBound witnessCleared witnessLost witnessLeft; do
+for w in witnessBound witnessCleared witnessLeft; do
   violate "witness solas2 $w" run quint/solas.qnt --main solas2 --invariant "$w"
 done
+# witnessLost is not run at random: the run to a loss is long, and the
+# tests reclaimTest and preemptingLostTest of solas2 reach it directly.
+violate "witness solas2 witnessRetained" quint run quint/solas.qnt --main solas2 \
+  --invariant witnessRetained --max-steps 80 --max-samples "$samples" --seed "$seed"
+violate "witness restore2 witnessRestored" run quint/restore.qnt --main restore2 --invariant witnessRestored
 for w in witnessSwitched witnessBoundOnDst; do
   violate "witness migrate2 $w" run quint/migrate.qnt --main migrate2 --invariant "$w"
 done
@@ -107,6 +123,8 @@ if [ "$verify" = 1 ]; then
     quint/negative/members-first.qnt --invariant claimMatchesDevice --max-steps 10
   pass "verify solas2 safety depth $depth" quint verify quint/solas.qnt \
     --main solas2 --invariant safety --max-steps "$depth"
+  pass "verify restore2 tokenOrder depth 10" quint verify quint/restore.qnt \
+    --main restore2 --invariant tokenOrder --max-steps 10
   pass "verify migrate2 migrateSafety depth 10" quint verify quint/migrate.qnt \
     --main migrate2 --invariant migrateSafety --max-steps 10
   pass "verify store3 storeSafety depth 12" quint verify quint/store.qnt \

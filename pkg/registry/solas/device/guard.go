@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/phoban01/solas/pkg/apis/solas"
+	"github.com/phoban01/solas/pkg/format"
 )
 
 // Transition holds the rules that the storage guard checks on each write
@@ -42,8 +43,8 @@ func Transition(oldObj, newObj runtime.Object) error {
 		//# holder to a different holder.
 		return fmt.Errorf("device %s is held by %s/%s; clear claimRef first", n.Name, oldRef.Namespace, oldRef.Name)
 	case oldRef == nil && newRef != nil:
-		if n.Status.FencingToken != o.Status.FencingToken+1 {
-			return fmt.Errorf("a bind of device %s must set token %d, not %d", n.Name, o.Status.FencingToken+1, n.Status.FencingToken)
+		if want := format.NextToken(o.Status.FencingToken, format.Epoch()); n.Status.FencingToken != want {
+			return fmt.Errorf("a bind of device %s must set token %d, not %d", n.Name, want, n.Status.FencingToken)
 		}
 	default:
 		//= spec/solas.md#5-3-status-updates

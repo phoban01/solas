@@ -13,6 +13,9 @@ import (
 // check tests the safety properties of spec 8.4, the same ones that the
 // Quint model checks.
 func (w *World) check(ctx context.Context) error {
+	if w.sweptRetained != nil {
+		return w.sweptRetained
+	}
 	var devices solasv1alpha1.DeviceList
 	if err := w.shared.List(ctx, &devices); err != nil {
 		return err

@@ -312,6 +312,7 @@ holder to a different holder.
 A holder is different when any field of `claimRef` differs.
 To move a device, a client MUST first clear `claimRef` and then set it
 in a second update.
+The one exception is a bind against an offer, section 14.2.
 When a status update sets `claimRef` on a free device, the server MUST
 set `status.fencingToken` to the old value plus 1.
 The first bind of a device gets token 1.
@@ -433,7 +434,7 @@ When the member renews its lease, the controller MUST set each
 `Suspended` claim back to `Bound` if its device still names it.
 When the controller finds that its member UID changed, it MUST set each
 claim with the old `status.memberUID` to `Lost`.
-A `Lost` claim MUST NOT bind again.
+A `Lost` claim MUST NOT bind again, except by a recovery, section 14.5.
 A user deletes a `Lost` claim to free its finalizer.
 
 A claim is in effect while it is `Bound`, it has no deletion timestamp,
@@ -457,6 +458,12 @@ The device MUST accept a use with a token equal to or higher than the
 highest token that it has accepted, and record that token as the highest.
 A device that cannot check tokens MUST sit behind a gatekeeper that
 checks them.
+Fencing protects a device only when every change of the device passes a
+token check.
+Until a gatekeeper exists for an actuator, fencing does not protect the
+devices that the actuator drives.
+A gatekeeper MAY use the `fencingToken` of the device in the store as
+the highest token, because it only goes up, ADR 0017.
 
 A bind gives the device a higher token, spec 5.3.
 So once the new holder has used the device, the device rejects the old
@@ -555,6 +562,19 @@ The observer MUST NOT compare `renewTime` with its own clock.
 `renewTime` comes from another clock, and the two clocks can disagree by
 any amount.
 
+An observer MUST count only time during which it reads the member list.
+When the observer has not read the member list for longer than the read
+gap `G`, it MUST forget the local times that it recorded, and record
+them again from its next read.
+The default `G` is twice the sweep interval.
+The sweeper MUST NOT delete a `Member` unless its last read of the
+member list is at most `G` old.
+In a store outage longer than `D`, no member can renew.
+Without this rule, every observer would treat every member as expired
+when the store returns, and sweep the whole mesh at once.
+Forgetting only makes a sweep later, so it keeps the safety of 8.4.
+`quint/negative/outage-sweep.qnt` shows the sweep without the rule.
+
 ### 8.2. Delete an expired member
 
 The sweeper MUST delete an expired `Member` with the resource version
@@ -608,6 +628,33 @@ The Quint model checks these properties:
   a use from a newer bind.
 - A claim for a free, matching device becomes `Bound` while its member
   is live.
+
+### 8.5. Reclaim policy
+
+A `Device` MAY set a reclaim policy in `spec.reclaimPolicy`: `Delete`,
+`Delay`, or `Retain`, ADR 0016.
+The default reclaim policy is `Delete`.
+The reclaim policy decides only when a sweeper may clear the `claimRef`
+of a member that is gone.
+It does not change when a member is gone, or when a claim is in effect.
+
+Under `Delete`, the sweeper MUST clear the `claimRef` as section 8.3
+describes.
+Under `Delay`, the sweeper MUST NOT clear the `claimRef` until the
+reclaim time `R` of the device has passed.
+The sweeper MUST measure `R` on its own clock, from its first sweep that
+found the holder gone.
+`R` is `spec.reclaimDelaySeconds` of the device.
+Under `Retain`, the sweeper MUST NOT clear the `claimRef`.
+
+An operator MAY release a retained device.
+The release MUST be a status update that clears `claimRef` and carries
+the resource version that the operator read.
+The release MUST fail while the holder's member UID is live.
+The release MUST record who released the device.
+
+A policy only removes or delays a clear, so the rules of 8.4 hold for
+every policy.
 
 ## 9. Pivot
 
@@ -872,3 +919,92 @@ UID, spec 7.2, and its claims go back to `Bound`.
 A cluster that switches later than `D` finds that the other members
 swept its `Member`, spec 8.
 It joins again, and its claims become `Lost`, spec 6.5.
+
+## 13. Restore
+
+A restore of the store from a backup puts back old fencing tokens and old
+resource versions, ADR 0018.
+
+### 13.1. Epoch
+
+The store MUST hold an epoch.
+The epoch of a store before its first restore is 0.
+After a restore, and before any server writes to the store, the restore
+tool MUST set an epoch above every epoch that the store had.
+The epoch in the backup can be old, so the tool MUST NOT only add 1 to
+it.
+The restore tool SHOULD use the time of the restore in Unix seconds, and
+at least the restored epoch plus 1.
+
+### 13.2. Fencing tokens
+
+A fencing token MUST hold the epoch of its bind in its high 32 bits.
+When a status update sets `claimRef` on a free device whose token is
+below `epoch * 2^32`, the server MUST set the token to `epoch * 2^32 + 1`.
+In every other bind, the token is the old value plus 1, spec 5.3.
+So a token compares as the pair (epoch, count), and a bind after a
+restore gets a token above every token issued before it.
+
+### 13.3. Resource versions
+
+After a restore, every resource version MUST be above every resource
+version issued before the restore.
+On the DynamoDB store, the restore tool MUST raise each counter item to
+at least `epoch * 2^32`.
+On the etcd store, the operator MUST restore with
+`etcdutl snapshot restore --bump-revision` and `--mark-compacted`.
+
+## 14. Transfer
+
+A holder can hand its device to a named claim, ADR 0019.
+
+### 14.1. Offer
+
+Before it offers a device, the holder's controller MUST set its claim to
+`Transferring`.
+A `Transferring` claim is not in effect, so its workload stops before
+the offer exists.
+The offer MUST be a status update of the device that sets
+`status.offer` to the named claim, its member, and its member UID.
+The offer MUST carry the resource version that the controller read.
+The server MUST reject an offer while a preemption request stands, and a
+second offer while one stands.
+
+### 14.2. Bind against the offer
+
+Only the claim that the offer names, with the member UID that it names,
+MAY bind against the offer.
+The bind MUST be one status update that sets `claimRef` to the named
+claim, sets `status.fencingToken` to the next token, spec 5.3 and 13.2,
+and clears `status.offer`.
+The device is never free in a transfer, so no third claim can take it.
+When the old claim's controller sees that its device names another
+claim, it MUST stop treating the device as its own, and MUST NOT write to
+the device.
+
+### 14.3. Withdraw
+
+The holder MAY withdraw an offer that nobody bound, with a status update
+that clears `status.offer`, and set its claim back to `Bound`.
+The withdraw and the bind against the offer are both conditional writes,
+so only one succeeds.
+The sweeper MUST clear an offer whose member UID is not in the member
+list, as it does for a preemption request, spec 10.9.
+
+### 14.4. Pre-bound claims
+
+A claim MAY name its device in `spec.deviceName`.
+A claim that names a device MUST bind only that device: against an offer
+that names the claim, or as a normal bind when the device is free.
+
+### 14.5. Recovery of a Lost claim
+
+A member that joined again with a new UID MAY recover a device whose
+`claimRef` names one of its `Lost` claims under an old member UID,
+ADR 0020.
+A recovery MUST be one status update that sets the `claimRef` to the
+member's current UID and raises `status.fencingToken`, spec 5.3 and 13.2.
+The server MUST reject a recovery unless the member name and the claim
+UID are the same, and no `Member` has the old member UID.
+After a recovery, the controller MUST set the claim back to `Bound`.
+A plain adopt MUST NOT take such a device, spec 6.3.

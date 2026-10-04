@@ -28,6 +28,11 @@ type DeviceSpec struct {
 	// PreemptionGracePeriodSeconds is how long a holder may keep the device
 	// after a preemption request. The default is 30.
 	PreemptionGracePeriodSeconds *int32
+	// ReclaimPolicy decides when a sweeper may clear the claimRef of a
+	// member that is gone, spec 8.5.
+	ReclaimPolicy ReclaimPolicy
+	// ReclaimDelaySeconds is the reclaim time R of the Delay policy.
+	ReclaimDelaySeconds *int32
 }
 
 // DeviceStatus shows which claim holds the device.
@@ -41,6 +46,9 @@ type DeviceStatus struct {
 	Preemption *PreemptionRequest
 	// Conditions hold the health of the device, spec 10.1.
 	Conditions []metav1.Condition
+	// LastRelease records the last clear of claimRef: who did it, when,
+	// and which claim held the device, spec 8.5. The server sets it.
+	LastRelease *Release
 }
 
 // PreemptionRequest asks the holder to give up the device, spec 10.5.
@@ -140,6 +148,8 @@ type StoreFormat struct {
 
 	// Finalized is the finalized format. Zero reads as 1.
 	Finalized int32
+	// Epoch is the epoch of the store, spec 13.1. A restore moves it up.
+	Epoch int64
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -150,4 +160,24 @@ type StoreFormatList struct {
 	metav1.ListMeta
 
 	Items []StoreFormat
+}
+
+// ReclaimPolicy is the reclaim policy of a device, spec 8.5.
+type ReclaimPolicy string
+
+// The reclaim policies, ADR 0016.
+const (
+	ReclaimDelete ReclaimPolicy = "Delete"
+	ReclaimDelay  ReclaimPolicy = "Delay"
+	ReclaimRetain ReclaimPolicy = "Retain"
+)
+
+// Release records a clear of the claimRef of a device, spec 8.5.
+type Release struct {
+	// By is the user that made the request, as the API server saw it.
+	By string
+	// At is the time of the clear, by the clock of the API server.
+	At metav1.Time
+	// Claim is the claimRef that the clear removed.
+	Claim ClaimRef
 }

@@ -26,6 +26,11 @@ const DefaultPreemptionGracePeriodSeconds = 30
 
 // SetDefaults_DeviceSpec sets the grace period when it is not set.
 func SetDefaults_DeviceSpec(obj *DeviceSpec) {
+	//= spec/solas.md#8-5-reclaim-policy
+	//# The default reclaim policy is `Delete`.
+	if obj.ReclaimPolicy == "" {
+		obj.ReclaimPolicy = ReclaimDelete
+	}
 	if obj.PreemptionGracePeriodSeconds == nil {
 		g := int32(DefaultPreemptionGracePeriodSeconds)
 		obj.PreemptionGracePeriodSeconds = &g

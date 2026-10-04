@@ -261,7 +261,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: `Suspended` claim back to `Bound` if its device still names it.
     TEXT[!MUST,implementation,test]: When the controller finds that its member UID changed, it MUST set each
     TEXT[!MUST,implementation,test]: claim with the old `status.memberUID` to `Lost`.
-    TEXT[!MUST,implementation]: A `Lost` claim MUST NOT bind again.
+    TEXT[!MUST,implementation]: A `Lost` claim MUST NOT bind again,
+    TEXT[!MUST]:  except by a recovery, section 14.5.
     TEXT[!MUST,implementation]: Workloads MUST use a device only while its claim is in effect.
 
   SECTION: [6.6. Device use](#6-6-device-use)
@@ -274,6 +275,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: highest token that it has accepted, and record that token as the highest.
     TEXT[!MUST,implementation]: A device that cannot check tokens MUST sit behind a gatekeeper that
     TEXT[!MUST,implementation]: checks them.
+    TEXT[!MAY]: A gatekeeper MAY use the `fencingToken` of the device in the store as
+    TEXT[!MAY]: the highest token, because it only goes up, ADR 0017.
 
   SECTION: [7.1. Resource](#7-1-resource)
     TEXT[!MUST,implementation]: `Member` MUST be a cluster-scoped resource in the group `solas.dev`,
@@ -329,6 +332,13 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: current resource version of each `Member`.
     TEXT[!MUST,implementation,test]: The observer MUST treat the `Member` as expired from local time `T + D`.
     TEXT[!MUST,implementation]: The observer MUST NOT compare `renewTime` with its own clock.
+    TEXT[!MUST,implementation,test]: An observer MUST count only time during which it reads the member list.
+    TEXT[!MUST,implementation,test]: When the observer has not read the member list for longer than the read
+    TEXT[!MUST,implementation,test]: gap `G`, it MUST forget the local times that it recorded, and record
+    TEXT[!MUST,implementation,test]: them again from its next read.
+    TEXT[implementation]: The default `G` is twice the sweep interval.
+    TEXT[!MUST]: The sweeper MUST NOT delete a `Member` unless its last read of the
+    TEXT[!MUST]: member list is at most `G` old.
 
   SECTION: [8.2. Delete an expired member](#8-2-delete-an-expired-member)
     TEXT[!MUST,implementation,test]: The sweeper MUST delete an expired `Member` with the resource version
@@ -349,6 +359,24 @@ SPECIFICATION: [Solas specification](spec/solas.md)
   SECTION: [8.4. Safety](#8-4-safety)
     TEXT[test]: A sweeper deletes a `Member` only after the holder treats itself as not
     TEXT[test]: live.
+
+  SECTION: [8.5. Reclaim policy](#8-5-reclaim-policy)
+    TEXT[!MAY,implementation,test]: A `Device` MAY set a reclaim policy in `spec.reclaimPolicy`: `Delete`,
+    TEXT[!MAY,implementation,test]: `Delay`, or `Retain`, ADR 0016.
+    TEXT[implementation]: The default reclaim policy is `Delete`.
+    TEXT[!MUST,implementation]: Under `Delete`, the sweeper MUST clear the `claimRef` as section 8.3
+    TEXT[!MUST,implementation]: describes.
+    TEXT[!MUST,implementation,test]: Under `Delay`, the sweeper MUST NOT clear the `claimRef` until the
+    TEXT[!MUST,implementation,test]: reclaim time `R` of the device has passed.
+    TEXT[!MUST,implementation]: The sweeper MUST measure `R` on its own clock, from its first sweep that
+    TEXT[!MUST,implementation]: found the holder gone.
+    TEXT[implementation]: `R` is `spec.reclaimDelaySeconds` of the device.
+    TEXT[!MUST,implementation,test]: Under `Retain`, the sweeper MUST NOT clear the `claimRef`.
+    TEXT[!MAY]: An operator MAY release a retained device.
+    TEXT[!MUST,implementation]: The release MUST be a status update that clears `claimRef` and carries
+    TEXT[!MUST,implementation]: the resource version that the operator read.
+    TEXT[!MUST,implementation,test]: The release MUST fail while the holder's member UID is live.
+    TEXT[!MUST,implementation,test]: The release MUST record who released the device.
 
   SECTION: [9.1. Mapping](#9-1-mapping)
     TEXT[!MUST,implementation]: The old object and its Device MUST have the same name.
@@ -538,3 +566,66 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!SHOULD]: seal.
     TEXT[test]: On the destination, the member renews its `Member`, which has the same
     TEXT[test]: UID, spec 7.2, and its claims go back to `Bound`.
+
+  SECTION: [13.1. Epoch](#13-1-epoch)
+    TEXT[!MUST]: The store MUST hold an epoch.
+    TEXT[!MUST,implementation,test]: After a restore, and before any server writes to the store, the restore
+    TEXT[!MUST,implementation,test]: tool MUST set an epoch above every epoch that the store had.
+    TEXT[!MUST]: The epoch in the backup can be old, so the tool MUST NOT only add 1 to
+    TEXT[!MUST]: it.
+    TEXT[!SHOULD,implementation]: The restore tool SHOULD use the time of the restore in Unix seconds, and
+    TEXT[!SHOULD,implementation]: at least the restored epoch plus 1.
+
+  SECTION: [13.2. Fencing tokens](#13-2-fencing-tokens)
+    TEXT[!MUST]: A fencing token MUST hold the epoch of its bind in its high 32 bits.
+    TEXT[!MUST,implementation,test]: When a status update sets `claimRef` on a free device whose token is
+    TEXT[!MUST,implementation,test]: below `epoch * 2^32`, the server MUST set the token to `epoch * 2^32 + 1`.
+
+  SECTION: [13.3. Resource versions](#13-3-resource-versions)
+    TEXT[!MUST]: After a restore, every resource version MUST be above every resource
+    TEXT[!MUST]: version issued before the restore.
+    TEXT[!MUST,implementation,test]: On the DynamoDB store, the restore tool MUST raise each counter item to
+    TEXT[!MUST,implementation,test]: at least `epoch * 2^32`.
+    TEXT[!MUST,implementation]: On the etcd store, the operator MUST restore with
+    TEXT[!MUST,implementation]: `etcdutl snapshot restore --bump-revision` and `--mark-compacted`.
+
+  SECTION: [14.1. Offer](#14-1-offer)
+    TEXT[!MUST]: Before it offers a device, the holder's controller MUST set its claim to
+    TEXT[!MUST]: `Transferring`.
+    TEXT[!MUST]: The offer MUST be a status update of the device that sets
+    TEXT[!MUST]: `status.offer` to the named claim, its member, and its member UID.
+    TEXT[!MUST]: The offer MUST carry the resource version that the controller read.
+    TEXT[!MUST]: The server MUST reject an offer while a preemption request stands, and a
+    TEXT[!MUST]: second offer while one stands.
+
+  SECTION: [14.2. Bind against the offer](#14-2-bind-against-the-offer)
+    TEXT[!MAY]: Only the claim that the offer names, with the member UID that it names,
+    TEXT[!MAY]: MAY bind against the offer.
+    TEXT[!MUST]: The bind MUST be one status update that sets `claimRef` to the named
+    TEXT[!MUST]: claim, sets `status.fencingToken` to the next token, spec 5.3 and 13.2,
+    TEXT[!MUST]: and clears `status.offer`.
+    TEXT[!MUST]: When the old claim's controller sees that its device names another
+    TEXT[!MUST]: claim, it MUST stop treating the device as its own, and MUST NOT write to
+    TEXT[!MUST]: the device.
+
+  SECTION: [14.3. Withdraw](#14-3-withdraw)
+    TEXT[!MAY]: The holder MAY withdraw an offer that nobody bound, with a status update
+    TEXT[!MAY]: that clears `status.offer`, and set its claim back to `Bound`.
+    TEXT[!MUST]: The sweeper MUST clear an offer whose member UID is not in the member
+    TEXT[!MUST]: list, as it does for a preemption request, spec 10.9.
+
+  SECTION: [14.4. Pre-bound claims](#14-4-pre-bound-claims)
+    TEXT[!MAY]: A claim MAY name its device in `spec.deviceName`.
+    TEXT[!MUST]: A claim that names a device MUST bind only that device: against an offer
+    TEXT[!MUST]: that names the claim, or as a normal bind when the device is free.
+
+  SECTION: [14.5. Recovery of a Lost claim](#14-5-recovery-of-a-lost-claim)
+    TEXT[!MAY]: A member that joined again with a new UID MAY recover a device whose
+    TEXT[!MAY]: `claimRef` names one of its `Lost` claims under an old member UID,
+    TEXT[!MAY]: ADR 0020.
+    TEXT[!MUST]: A recovery MUST be one status update that sets the `claimRef` to the
+    TEXT[!MUST]: member's current UID and raises `status.fencingToken`, spec 5.3 and 13.2.
+    TEXT[!MUST]: The server MUST reject a recovery unless the member name and the claim
+    TEXT[!MUST]: UID are the same, and no `Member` has the old member UID.
+    TEXT[!MUST]: After a recovery, the controller MUST set the claim back to `Bound`.
+    TEXT[!MUST]: A plain adopt MUST NOT take such a device, spec 6.3.

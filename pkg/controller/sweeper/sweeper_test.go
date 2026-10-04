@@ -62,7 +62,7 @@ func TestExpireAfterDOnTheObserverClock(t *testing.T) {
 	if err := s.Run(ctx); err != nil { // first sight of b at T
 		t.Fatal(err)
 	}
-	clk.SetTime(clk.Now().Add(29 * time.Second))
+	advance(t, s, clk, 29*time.Second)
 	if err := s.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -231,5 +231,111 @@ func TestClearStaleRequests(t *testing.T) {
 	}
 	if d.Status.Preemption != nil || d.Status.ClaimRef == nil {
 		t.Errorf("request %+v, holder %+v; want the request gone and the holder kept", d.Status.Preemption, d.Status.ClaimRef)
+	}
+}
+
+// advance moves the clock by d in steps of at most the sweep interval, and
+// runs the sweeper after each step, as Start does.
+func advance(t *testing.T, s *Sweeper, clk *clocktesting.FakePassiveClock, d time.Duration) {
+	t.Helper()
+	for d > 0 {
+		step := min(d, s.Interval)
+		clk.SetTime(clk.Now().Add(step))
+		d -= step
+		if err := s.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+//= spec/solas.md#8-1-expiry-on-the-observer
+//= type=test
+//# When the observer has not read the member list for longer than the read
+//# gap `G`, it MUST forget the local times that it recorded, and record
+//# them again from its next read.
+
+// TestOutageRestartsTheTimer: the store is down for longer than D, so the
+// sweeper cannot list and b cannot renew. When the store returns, the
+// sweeper does not delete b at once. It waits a full D from its first read
+// after the outage.
+func TestOutageRestartsTheTimer(t *testing.T) {
+	ctx := context.Background()
+	c := fakekube.NewClient(member("a", "ua"), member("b", "ub"))
+	clk := clocktesting.NewFakePassiveClock(time.Unix(5000, 0))
+	s := newSweeper(c, clk)
+	if err := s.Run(ctx); err != nil { // first sight of b
+		t.Fatal(err)
+	}
+	clk.SetTime(clk.Now().Add(2 * time.Minute)) // the outage: no run works
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(t, c, "b") {
+		t.Fatal("b deleted on the first read after the outage")
+	}
+	advance(t, s, clk, 29*time.Second)
+	if !exists(t, c, "b") {
+		t.Fatal("b deleted before D after the outage")
+	}
+	advance(t, s, clk, time.Second)
+	if exists(t, c, "b") {
+		t.Error("b, which never renewed, not deleted D after the outage")
+	}
+}
+
+//= spec/solas.md#8-5-reclaim-policy
+//= type=test
+//# Under `Retain`, the sweeper MUST NOT clear the `claimRef`.
+
+//= spec/solas.md#8-5-reclaim-policy
+//= type=test
+//# Under `Delay`, the sweeper MUST NOT clear the `claimRef` until the
+//# reclaim time `R` of the device has passed.
+
+// TestReclaimPolicy holds one device under each policy for a member that
+// is gone. Delete is freed at once, Delay after R = 20s, and Retain never.
+func TestReclaimPolicy(t *testing.T) {
+	ctx := context.Background()
+	held := func(name string, policy solasv1alpha1.ReclaimPolicy, delay *int32) *solasv1alpha1.Device {
+		d := &solasv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		d.Spec.ReclaimPolicy, d.Spec.ReclaimDelaySeconds = policy, delay
+		d.Status.ClaimRef = &solasv1alpha1.ClaimRef{Member: "gone", MemberUID: "ug", Namespace: "ns", Name: "c-" + name, UID: types.UID("u-" + name)}
+		d.Status.FencingToken = 1
+		return d
+	}
+	r := int32(20)
+	c := fakekube.NewClient(member("a", "ua"),
+		held("d-delete", solasv1alpha1.ReclaimDelete, nil),
+		held("d-delay", solasv1alpha1.ReclaimDelay, &r),
+		held("d-retain", solasv1alpha1.ReclaimRetain, nil))
+	clk := clocktesting.NewFakePassiveClock(time.Unix(5000, 0))
+	s := newSweeper(c, clk)
+	free := func(name string) bool {
+		t.Helper()
+		var d solasv1alpha1.Device
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d.Status.ClaimRef == nil
+	}
+
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !free("d-delete") || free("d-delay") || free("d-retain") {
+		t.Fatalf("after the first sweep: delete free %v, delay free %v, retain free %v; want true, false, false",
+			free("d-delete"), free("d-delay"), free("d-retain"))
+	}
+	advance(t, s, clk, 19*time.Second)
+	if free("d-delay") {
+		t.Fatal("d-delay freed before R")
+	}
+	advance(t, s, clk, time.Second)
+	if !free("d-delay") {
+		t.Error("d-delay not freed at R")
+	}
+	advance(t, s, clk, 10*time.Minute)
+	if free("d-retain") {
+		t.Error("the sweeper freed d-retain")
 	}
 }

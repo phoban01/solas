@@ -19,6 +19,7 @@ var (
 // ValidateDevice checks a new device.
 func ValidateDevice(d *solas.Device) field.ErrorList {
 	errs := genericvalidation.ValidateObjectMeta(&d.ObjectMeta, false, genericvalidation.NameIsDNSSubdomain, metaPath)
+	errs = append(errs, validateReclaim(&d.Spec, field.NewPath("spec"))...)
 	return append(errs, validateClaimRef(d.Status.ClaimRef, statusPath.Child("claimRef"))...)
 }
 
@@ -158,4 +159,33 @@ func validatePreemption(d, old *solas.Device) field.ErrorList {
 func SameIdentity(a, b *solas.ClaimRef) bool {
 	return a.Member == b.Member && a.MemberUID == b.MemberUID && a.Namespace == b.Namespace &&
 		a.Name == b.Name && a.UID == b.UID
+}
+
+//= spec/solas.md#8-5-reclaim-policy
+//# A `Device` MAY set a reclaim policy in `spec.reclaimPolicy`: `Delete`,
+//# `Delay`, or `Retain`, ADR 0016.
+
+//= spec/solas.md#8-5-reclaim-policy
+//# `R` is `spec.reclaimDelaySeconds` of the device.
+
+// validateReclaim checks the reclaim policy and its delay. An empty policy
+// is Delete; defaulting sets it on the way in.
+func validateReclaim(spec *solas.DeviceSpec, path *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	switch spec.ReclaimPolicy {
+	case "", solas.ReclaimDelete, solas.ReclaimRetain:
+		if spec.ReclaimDelaySeconds != nil {
+			errs = append(errs, field.Forbidden(path.Child("reclaimDelaySeconds"), "only the Delay policy has a reclaim time"))
+		}
+	case solas.ReclaimDelay:
+		if spec.ReclaimDelaySeconds == nil {
+			errs = append(errs, field.Required(path.Child("reclaimDelaySeconds"), "the Delay policy needs a reclaim time"))
+		} else if *spec.ReclaimDelaySeconds < 0 {
+			errs = append(errs, field.Invalid(path.Child("reclaimDelaySeconds"), *spec.ReclaimDelaySeconds, "must not be negative"))
+		}
+	default:
+		errs = append(errs, field.NotSupported(path.Child("reclaimPolicy"), spec.ReclaimPolicy,
+			[]solas.ReclaimPolicy{solas.ReclaimDelete, solas.ReclaimDelay, solas.ReclaimRetain}))
+	}
+	return errs
 }
