@@ -97,7 +97,7 @@ Claude Code session, so heavy jobs must not overlap.
   after their member is gone: Delete, Delay, or Retain
   ([docs/adr/0016-reclaim-policy.md](docs/adr/0016-reclaim-policy.md)).
 - A gatekeeper in front of each actuator checks fencing tokens against
-  the store (proposed; MAAS designed, OCN open)
+  the store (proposed)
   ([docs/adr/0017-actuator-gatekeepers.md](docs/adr/0017-actuator-gatekeepers.md)).
 - A restore moves the store to a new epoch, which tokens and resource
   versions carry, so they never go back
