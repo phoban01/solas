@@ -29,6 +29,7 @@ need a correction before the plan:
 | The soak audited 226 events | A soak with load on the store during the faults, so the replay audits thousands of events; a two-hour soak on DynamoDB | M23 |
 | Generality is a claim | A recipe for a new kind, the diff of the last kind added as proof, and a CI check that the generic core names no kind | M23 |
 | No order across kinds | A written argument, checked by the Quint model, that no invariant of solas needs an order across two resources | M23 |
+| Fencing is a Device feature, not a primitive | A holder status type and a generic holder guard that any kind opts in to, spec 5.3, 6.6, and 14 rewritten for "a kind with a holder", proved with a second held kind (#264) | M23 |
 | 429 on consistent lists under writes; 1.6 s lists at 10,000 devices | Issues #233 and #237 fixed; the 10,000 device rows measured again | M22 |
 | Claims suspend 2 to 4 times D after a store pause (#236) | The suspend within D plus one reconcile, measured again by `TestStoreOutage`, as a row | M22 |
 | Wide surface, thin evidence | `docs/confidence.md`: every claim of the README and the ADRs, with the test, model, or row that backs it, or the word "open" | M25 |
@@ -137,6 +138,12 @@ ADR 0017 moves from proposed to accepted, with the measured cost.
   needs and the files it does not touch, with the diff of commit
   2547d87 as the proof. `scripts/kind-check.sh` fails CI when
   `pkg/storage` or `pkg/apiserver/storage.go` names a kind.
+- **A holder primitive (#264).** Today only Device has a holder and a
+  fencing token, and the rules live in Device's strategy and guard. A
+  shared holder status type and a generic guard that any kind registers
+  make the exclusion rule a primitive. Spec 5.3, 6.6, and 14 speak of
+  "a kind with a holder"; Device is the first. A second held kind in a
+  test, with an empty diff in `pkg/storage`, is the proof.
 - **Order across kinds.** A section in ADR 0003: which rules of the
   spec compare two objects, and why each one rests on a conditional
   write or a causal order and not on one counter. The Quint model
