@@ -65,7 +65,8 @@ module store {
     nondet k = 1.to(3).filter(x => counter + x <= MAXW).oneOf()
     all {
       counter' = counter + k,
-      log' = log.union((counter + 1).to(counter + k)),
+      // Apalache needs a constant range: filter one, instead of counter + 1 to counter + k.
+      log' = log.union(1.to(MAXW).filter(v => v > counter and v <= counter + k)),
       w' = w,
       l' = l,
     },
