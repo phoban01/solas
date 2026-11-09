@@ -88,6 +88,9 @@ func main() {
 	}
 }
 
+// benchAttempts is how many attempts each DynamoDB call of the bench makes.
+const benchAttempts = 8
+
 // counting counts the calls to DynamoDB, so the tool can report reads per
 // member. GetItem and Query are reads; TransactWriteItems is a write.
 type counting struct {
@@ -125,7 +128,9 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 		g.EtcdServers = sc.Endpoints
 		return g, nil, nil
 	}
-	client, err := storageurl.DynamoClient(ctx, sc)
+	// A real table throttles a hot partition and tells the client to try
+	// again; the bench gives each call more attempts than the server does.
+	client, err := storageurl.DynamoClientWithAttempts(ctx, sc, benchAttempts)
 	if err != nil {
 		return g, nil, err
 	}
@@ -568,7 +573,19 @@ func each(ctx context.Context, n int, f func(i int) error) error {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				if err := f(i); err != nil {
+				// A real table throttles a hot partition; try again with
+				// a growing pause before giving up on an item.
+				var err error
+				for attempt := range 6 {
+					if err = f(i); err == nil || ctx.Err() != nil {
+						break
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(time.Duration(50<<attempt) * time.Millisecond):
+					}
+				}
+				if err != nil {
 					mu.Lock()
 					if firstErr == nil {
 						firstErr = err

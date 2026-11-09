@@ -121,6 +121,45 @@ can see:
 | 2026-11-09 | 5ce2cfe | etcd, fsync on | 8 | 64 | 3335.6 | 32.8 | 2.6 | 17.7 | 3.4 | 19.3 | 106.9 | 0.9 | 8.9 | - | 0 |
 | 2026-11-09 | 5ce2cfe | etcd, fsync on | 32 | 256 | 1353.6 | 37.6 | 19.0 | 51.7 | 44.8 | 310.1 | 107.1 | 27.5 | 326.8 | - | 0 |
 
+
+## DynamoDB
+
+Method: `devbox run scale` with `SOLAS_DYNAMODB_URL` from
+`scripts/aws-bench.sh`, spec 3.1 and docs/plan-evidence.md M20. The
+table is on-demand, new for each series, and deleted at the end. The
+bench ran on the development VM; the TCP connect time to the region is
+in the row, and the soak of the row above ran on the VM at the same
+time. Each run lasted 20 seconds with 8 claims per member.
+
+| Date | Commit | Region, connect | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-----------------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | dfe164e | eu-west-1, 50 ms | 2 | 16 | 12.1 | 48.6 | 209.0 | 1112.9 | 59.9 | 121.6 | 120.2 | 62.1 | 176.6 | 140.6 | 0 |
+| 2026-11-09 | dfe164e | eu-west-1, 50 ms | 8 | 64 | 11.1 | 83.7 | 126.8 | 2765.7 | 47.3 | 204.7 | 124.3 | 76.7 | 237.6 | 75.0 | 83 |
+| 2026-11-09 | dfe164e | eu-west-1, 50 ms | 32 | 256 | 14.5 | 73.2 | 236.3 | 4912.9 | 67.7 | 372.4 | 422.1 | 96.2 | 235.1 | 32.7 | 1477 |
+
+**The first real DynamoDB numbers, and they are low.** The Device
+resource sustained 11 to 15 binds per second from 2 to 32 members, and
+the errors at 8 and 32 members are `ThrottlingException: Throughput
+exceeds the current capacity of your table or index ... check if you
+have a hot key`. Every write of the resource goes to three items that
+share three partition keys: the counter, the object partition
+`obj#devices`, and the event partition. A partition sustains 1000 write
+units per second, a transaction costs two units per item, and an event
+item holds the object and its previous state, so one bind costs about
+15 to 30 write units across the three hot partitions. That puts the
+ceiling of the resource near 30 to 60 writes per second, which is what
+the rows show, with a new on-demand table still scaling up. ADR 0003
+assumed about 1000 writes per second per counter item; the partition,
+not the counter, is the limit, and it is an order of magnitude lower.
+Issue #241 measures the ceiling in a longer run, and the partition per
+member of ADR 0022, or a partition per shard of devices, is the way
+up.
+
+The 10,000 device run on the table failed while it created the pool:
+16 parallel creates hit the same counter item, and the second attempt
+of a cancelled transaction met `TransactionInProgressException`. The
+bench now gives each call eight attempts and retries the pool creation;
+the row follows.
 ## Gatekeeper
 
 Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec
