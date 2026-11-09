@@ -21,6 +21,15 @@ an event with version `n+1`.
 - Versions within a resource strictly increase and have no gaps.
 - A transaction for `n+1` cannot commit before the transaction for `n`.
   So the event log is complete up to the counter value.
+- All writes to one resource contend on one item. On a DynamoDB table in
+  eu-west-1, 20 to 50 ms from the client, the Device resource sustained
+  about 25 transactions per second, binds and releases together, in
+  runs of 20 seconds and of five minutes (docs/benchmarks.md, DynamoDB,
+  2026-11-09). DynamoDB serializes the transactions that touch one item,
+  so the counter, not the write units of a partition, sets the limit.
+  This ADR first assumed about 1000 writes per second; the measured
+  figure is forty times lower, and issue #267 holds the design that
+  lifts it. The original text follows.
 - All writes to one resource contend on one item. This limits a resource
   to roughly 1000 writes per second. That is enough for this project.
 - Versions from two resources do not compare. Kubernetes does not need

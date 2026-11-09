@@ -151,18 +151,43 @@ sustains 1000 write units per second, so the event partition alone
 would allow about 250 binds and releases per second, and the counter
 item 500. The rows show a tenth of that, with the table new and
 DynamoDB reporting that it was still scaling the capacity of a hot key.
-The five minute row below shows where a table settles. ADR 0003
+The five minute row below shows that it does not scale past it. ADR 0003
 assumed about 1000 writes per second per counter item; on a real table
 the hot partition keys, not the counter, set the ceiling, and the
 partition per member of ADR 0022 or a partition per shard of devices
 is the way up.
 
-The 10,000 device run on the table failed while it created the pool:
-16 parallel creates hit the same counter item, and the second attempt
-of a cancelled transaction met `TransactionInProgressException`. The
-bench now gives each call eight attempts and retries the pool creation;
-the row follows.
-## Gatekeeper
+### 10,000 devices and a five minute run
+
+The same table, with the bench giving each call eight attempts (commit
+fd95ab6). The first two rows have 10,000 devices and 20 seconds; the
+last has the default pool at 8 members for five minutes, to see where a
+table settles once its capacity has scaled.
+
+| Date | Commit | Region, connect | Members | Devices | Run | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-----------------|--------:|--------:|----:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | fd95ab6 | eu-west-1, 43 ms | 2 | 10000 | 20 s | 13.5 | 0.0 | 382.5 | 3781.2 | 62.9 | 123.3 | 826.9 | 64.4 | 209.7 | 138.8 | 0 |
+| 2026-11-09 | fd95ab6 | eu-west-1, 43 ms | 8 | 10000 | 20 s | 12.5 | 0.0 | 1717.2 | 11369.9 | 67.4 | 157.1 | 2045.0 | 105.7 | 220.4 | 77.7 | 0 |
+| 2026-11-09 | fd95ab6 | eu-west-1, 20 ms | 8 | 64 | 300 s | 11.2 | 52.1 | 576.7 | 4993.4 | 67.5 | 246.9 | 121.8 | 97.0 | 275.9 | 82.7 | 2 |
+
+**The table does not scale past it.** Five minutes at 8 members gave
+11.2 binds per second, the same as the 20 second runs, so the limit is
+not a new table warming up. With eight attempts per call the throttling
+no longer shows as errors; it shows as the bind p50 of 0.6 to 1.7
+seconds and a p99 of 5 to 11 seconds, which is the SDK's backoff. The
+Device resource on DynamoDB sustains about 25 transactions per second,
+binds and releases together, from a client 20 to 50 ms away. That is
+below the partition arithmetic above by a factor of ten, so the limit is
+tighter than write units: DynamoDB serializes transactions that touch
+one item, and every transaction of the resource touches the counter
+item. The in-region run of #243 separates the round trip from the
+server's share. Issue #267 is the design that lifts the ceiling.
+
+**What holds up at 10,000 devices.** The list stays at 63 to 67 ms,
+from the cache, and a member syncs the whole pool in 0.8 seconds alone
+and 2 seconds when eight members sync together. The conflict rate is
+zero, because the claims rarely pick the same device; the bind latency
+is the counter, not the race.
 
 Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec
 17. It sends 2000 deploy calls to a fake actuator directly and 2000
