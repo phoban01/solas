@@ -86,12 +86,21 @@ An event item MUST hold its expiry time, in Unix seconds, in `expires`.
 
 ### 2.3. Writes
 
-Every write MUST be one `TransactWriteItems` call.
-The call MUST hold three actions: a counter update, an object action, and
-an event put.
-
-The counter update MUST set `n` to `n + 1` on condition that `n` still
+Every write MUST be part of one `TransactWriteItems` call.
+A call MUST hold one counter update and, for each write that it
+carries, an object action and an event put.
+A call MAY carry several writes of one resource that arrived at the
+server together.
+Let `k` be the number of writes in the call.
+The counter update MUST set `n` to `n + k` on condition that `n` still
 has the value that the server read.
+The writes of a call MUST get the versions `n + 1` to `n + k`, in the
+order of the call.
+DynamoDB serializes the transactions that touch one item, so one
+transaction per write caps a resource at a few dozen writes per second
+on a real table, whatever the number of writers.
+A batch moves the counter once for a burst of writes, and the writes of
+one server do not each wait a round trip on the counter.
 
 For a create, the object action MUST be a put on condition that the
 object item does not exist.
@@ -107,14 +116,15 @@ The token makes a retry after a lost reply safe, because DynamoDB does not
 apply the same token twice.
 
 If the transaction fails only on the counter condition, the server MUST
-read the counter again and retry the same write.
+read the counter again and retry the same writes.
 The server SHOULD wait a short random time before each such retry.
 If the transaction fails on the object condition of a create, the server
-MUST return `409 AlreadyExists`.
+MUST return `409 AlreadyExists` for that write.
 If the transaction fails on the object condition of an update or a
-delete, the server MUST read the object again and retry.
+delete, the server MUST read the object again and retry that write.
 The retry runs the preconditions and the update function again, on the
 new state.
+The other writes of the call MUST retry in a new call.
 When a request carries a resource version that no longer matches, the
 Kubernetes generic registry returns `409 Conflict`.
 

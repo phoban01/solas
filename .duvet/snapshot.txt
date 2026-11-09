@@ -31,11 +31,15 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: An event item MUST hold its expiry time, in Unix seconds, in `expires`.
 
   SECTION: [2.3. Writes](#2-3-writes)
-    TEXT[!MUST,implementation]: Every write MUST be one `TransactWriteItems` call.
-    TEXT[!MUST,implementation]: The call MUST hold three actions: a counter update, an object action, and
-    TEXT[!MUST,implementation]: an event put.
-    TEXT[!MUST,implementation]: The counter update MUST set `n` to `n + 1` on condition that `n` still
+    TEXT[!MUST,implementation]: Every write MUST be part of one `TransactWriteItems` call.
+    TEXT[!MUST,implementation]: A call MUST hold one counter update and, for each write that it
+    TEXT[!MUST,implementation]: carries, an object action and an event put.
+    TEXT[!MAY,implementation,test]: A call MAY carry several writes of one resource that arrived at the
+    TEXT[!MAY,implementation,test]: server together.
+    TEXT[!MUST,implementation]: The counter update MUST set `n` to `n + k` on condition that `n` still
     TEXT[!MUST,implementation]: has the value that the server read.
+    TEXT[!MUST,implementation,test]: The writes of a call MUST get the versions `n + 1` to `n + k`, in the
+    TEXT[!MUST,implementation,test]: order of the call.
     TEXT[!MUST,implementation]: For a create, the object action MUST be a put on condition that the
     TEXT[!MUST,implementation]: object item does not exist.
     TEXT[!MUST,implementation,test]: For an update, the object action MUST be a put on condition that `rv`
@@ -45,12 +49,13 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: The event put MUST be on condition that the event item does not exist.
     TEXT[!MUST,implementation]: Each call MUST set a `ClientRequestToken`.
     TEXT[!MUST,implementation]: If the transaction fails only on the counter condition, the server MUST
-    TEXT[!MUST,implementation]: read the counter again and retry the same write.
+    TEXT[!MUST,implementation]: read the counter again and retry the same writes.
     TEXT[!SHOULD,implementation]: The server SHOULD wait a short random time before each such retry.
     TEXT[!MUST,implementation]: If the transaction fails on the object condition of a create, the server
-    TEXT[!MUST,implementation]: MUST return `409 AlreadyExists`.
+    TEXT[!MUST,implementation]: MUST return `409 AlreadyExists` for that write.
     TEXT[!MUST,implementation]: If the transaction fails on the object condition of an update or a
-    TEXT[!MUST,implementation]: delete, the server MUST read the object again and retry.
+    TEXT[!MUST,implementation]: delete, the server MUST read the object again and retry that write.
+    TEXT[!MUST,implementation]: The other writes of the call MUST retry in a new call.
     TEXT[!MUST,implementation]: The server MUST reject a write whose event item would exceed the
     TEXT[!MUST,implementation]: DynamoDB item size limit.
     TEXT[!MUST,implementation]: The server MUST return `413 RequestEntityTooLarge` for such a write.

@@ -71,6 +71,8 @@ type store struct {
 	groupResource schema.GroupResource
 	now           func() time.Time
 	watchers      watchers
+	// batch collects the writes of this server to the resource, spec 2.3.
+	batch batcher
 }
 
 var _ storage.Interface = &store{}

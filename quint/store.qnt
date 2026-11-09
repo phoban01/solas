@@ -57,6 +57,20 @@ module store {
     l' = l,
   }
 
+  // Several writes of one server arrive together and commit in one
+  // transaction: the counter moves by their number and the log gets each
+  // of the versions, spec 2.3.
+  action batchWrite = all {
+    counter < MAXW,
+    nondet k = 1.to(3).filter(x => counter + x <= MAXW).oneOf()
+    all {
+      counter' = counter + k,
+      log' = log.union((counter + 1).to(counter + k)),
+      w' = w,
+      l' = l,
+    },
+  }
+
   // DynamoDB deletes an expired event, late and in any order, spec 4.1.
   action expire = all {
     log.size() > 0,
@@ -134,7 +148,7 @@ module store {
       l' = { ...l, phase: 0 },
   }
 
-  action step = any { write, expire, pollRead, pollQuery, listRead, listQuery, listCheck }
+  action step = any { write, batchWrite, expire, pollRead, pollQuery, listRead, listQuery, listCheck }
 
   // Delivered versions strictly increase, spec 3.2 and 4.2.
   val monotonicRV = w.ordered
