@@ -44,6 +44,8 @@ copies, and verifies, and each cluster then gets the new URL.
 `devbox run verify` runs the unit tests, the Quint model checks, the
 model-based tests on both stores, and the Duvet traceability gate. Set
 `SOLAS_STORE=etcd` to run `devbox run demo`, `devbox run e2e`, or
-`devbox run smoke` on etcd. `devbox run soak` runs faults against the
-mesh for 30 minutes and replays the store history;
-[docs/benchmarks.md](docs/benchmarks.md) lists every measured number.
+`devbox run smoke` on etcd. `devbox run scale` runs the load tool
+`solas-bench` on both local stores, and `devbox run soak` runs faults
+against the mesh for 30 minutes and replays the store history.
+[docs/benchmarks.md](docs/benchmarks.md) lists every measured number,
+and [docs/scale.md](docs/scale.md) has what the scale numbers mean.
