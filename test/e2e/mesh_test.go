@@ -44,7 +44,7 @@ func dumpState(t *testing.T) {
 		for _, args := range [][]string{
 			{"get", "deviceclaims", "-A", "-o", "wide"},
 			{"get", "devices", "-o", "wide"},
-			{"-n", "solas-system", "logs", "deploy/solas", "--tail=60"},
+			{"-n", "solas-system", "logs", "deploy/solas", "--tail=150"},
 		} {
 			out, _ := exec.Command("kubectl", append([]string{"--kubeconfig", kubeconfig(name)}, args...)...).CombinedOutput()
 			t.Logf("[%s] kubectl %s\n%s", name, strings.Join(args, " "), out)

@@ -25,10 +25,16 @@ lease D is 10 seconds, the margin 1 second, the sweep every 3 seconds.
 |------|--------|--------------|-------------:|--------------------------:|------------------------------:|-----------------------------------|
 | 2026-11-09 | bf0b95c | etcd | 6 | 41 s | 4 s | yes, in 9 s |
 | 2026-11-09 | bf0b95c | dynamodb-local | 6 | 23 s | 4 s | yes, in 9 s |
+| 2026-11-09 | 8a17ac0 | etcd | 6 | 9 s | 4 s | yes, in 10 s |
+| 2026-11-09 | 8a17ac0 | dynamodb-local | 6 | 11 s | 4 s | yes, in 10 s |
 
-The suspend takes longer than D because the one controller worker is
-held by a device list that waits for the store until the request timeout
-of 20 seconds, and on etcd also by the keepalive of the etcd client.
+The first two rows: the suspend took longer than D because the one
+controller worker was held by a device list that waited for the store
+until the request timeout of 20 seconds, and the retries of failed
+reconciles backed off without a bound (#236). The last two rows: the
+controllers bound each request to D / 3 and retry a failed reconcile
+within D / 3, spec 16.2, so the suspend comes within D of the last
+renew plus one request.
 
 ## Scale
 
@@ -74,6 +80,46 @@ nothing reports that for the DynamoDB store. Every list then queries the
 table for all 10,000 items. Issue #237 tracks it; [scale.md](scale.md)
 has the detail. Both caches sync the pool in about 200 ms.
 
+
+### After the list path change (#237)
+
+Commit 5ce2cfe serves consistent lists from the watch cache on
+DynamoDB, as etcd already did. The same runs again:
+
+| Date | Commit | Store | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | 5ce2cfe | dynamodb-local | 2 | 16 | 130.2 | 27.7 | 12.4 | 118.9 | 60.9 | 102.4 | 102.9 | 47.6 | 101.2 | 626.3 | 0 |
+| 2026-11-09 | 5ce2cfe | dynamodb-local | 8 | 64 | 46.5 | 50.7 | 114.1 | 1039.0 | 17.5 | 98.9 | 106.5 | 45.9 | 178.8 | 237.3 | 0 |
+| 2026-11-09 | 5ce2cfe | dynamodb-local | 32 | 256 | 23.8 | 48.1 | 1881.3 | 9566.9 | 13.5 | 1239.7 | 108.7 | 100.1 | 596.0 | 59.4 | 0 |
+| 2026-11-09 | 5ce2cfe | dynamodb-local | 2 | 10000 | 152.5 | 0.1 | 17.8 | 221.3 | 52.7 | 109.2 | 207.2 | 44.7 | 102.1 | 665.3 | 0 |
+| 2026-11-09 | 5ce2cfe | dynamodb-local | 8 | 10000 | 52.0 | 0.4 | 338.8 | 3424.5 | 8.9 | 99.0 | 212.9 | 57.6 | 195.0 | 231.8 | 0 |
+| 2026-11-09 | 5ce2cfe | etcd | 2 | 16 | 4102.6 | 29.7 | 0.5 | 4.8 | 0.6 | 4.9 | 102.7 | 0.1 | 1.9 | - | 0 |
+| 2026-11-09 | 5ce2cfe | etcd | 8 | 64 | 3351.7 | 32.8 | 2.5 | 17.7 | 3.4 | 20.6 | 106.2 | 0.9 | 10.2 | - | 0 |
+| 2026-11-09 | 5ce2cfe | etcd | 32 | 256 | 1084.5 | 37.7 | 19.7 | 67.2 | 49.3 | 574.6 | 107.0 | 31.3 | 639.9 | - | 0 |
+| 2026-11-09 | 5ce2cfe | etcd | 2 | 10000 | 885.6 | 0.1 | 1.2 | 13.6 | 7.6 | 48.6 | 102.3 | 0.5 | 28.5 | - | 0 |
+| 2026-11-09 | 5ce2cfe | etcd | 8 | 10000 | 743.2 | 0.3 | 6.0 | 68.4 | 38.8 | 254.6 | 207.0 | 20.4 | 179.7 | - | 0 |
+
+At 10,000 devices on dynamodb-local the list p50 goes from 1619 ms to
+53 ms and the binds per second from 4.9 to 152.5. No run has a `429`
+any more: the lists no longer read the counter twice around a table
+query. At 16 devices the list p50 rises from 9 ms to 61 ms, because a
+consistent list from the cache waits for the next progress request,
+which the library sends every 100 ms while a list waits; the reads per
+member fall from 2116 to 626 per second, because the list itself reads
+nothing from the table. [scale.md](scale.md) has the trade.
+
+### etcd with fsync
+
+The etcd rows above run etcd with `--unsafe-no-fsync`, as the unit tests
+do. `SOLAS_ETCD_FSYNC=1 SCALE_STORES=etcd devbox run scale` keeps fsync
+on. On this VM, whose disk is virtual, it changes nothing that the run
+can see:
+
+| Date | Commit | Store | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | 5ce2cfe | etcd, fsync on | 2 | 16 | 3946.1 | 29.8 | 0.5 | 4.8 | 0.7 | 5.0 | 102.2 | 0.1 | 2.0 | - | 0 |
+| 2026-11-09 | 5ce2cfe | etcd, fsync on | 8 | 64 | 3335.6 | 32.8 | 2.6 | 17.7 | 3.4 | 19.3 | 106.9 | 0.9 | 8.9 | - | 0 |
+| 2026-11-09 | 5ce2cfe | etcd, fsync on | 32 | 256 | 1353.6 | 37.6 | 19.0 | 51.7 | 44.8 | 310.1 | 107.1 | 27.5 | 326.8 | - | 0 |
 ## Soak
 
 Method: `devbox run soak`, the test `TestSoak` in

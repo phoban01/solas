@@ -12,9 +12,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/clock"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -52,9 +54,22 @@ type Reconciler struct {
 
 var _ reconcile.Reconciler = &Reconciler{}
 
+//= spec/solas.md#16-2-claims
+//# The controller MUST retry a failed reconcile within `D / 3`.
+
+// RetryLimiter returns the rate limiter of the claim queue: an
+// exponential backoff per claim that never exceeds resync, D / 3. In a
+// store outage every reconcile that reads the store fails, and the
+// default limiter would push the retries out to minutes, so the claims
+// would not suspend when the lease lapses.
+func RetryLimiter(resync time.Duration) workqueue.TypedRateLimiter[reconcile.Request] {
+	return workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](5*time.Millisecond, resync)
+}
+
 // SetupWithManager registers the reconciler.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).For(&claimsv1alpha1.DeviceClaim{}).Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).For(&claimsv1alpha1.DeviceClaim{}).
+		WithOptions(controller.Options{RateLimiter: RetryLimiter(r.Resync)}).Complete(r)
 }
 
 // Reconcile moves one claim toward its phase.
@@ -290,6 +305,7 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 	if p := claim.Status.Phase; (p == claimsv1alpha1.ClaimBound || p == claimsv1alpha1.ClaimPreempting) && (!st.Live || st.Draining) {
 		setPhase(claim, claimsv1alpha1.ClaimSuspended)
 		claim.Status.PreemptionSeenAt = nil
+		log.FromContext(ctx).Info("suspended", "device", claim.Status.DeviceName, "live", st.Live, "draining", st.Draining)
 		return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 	}
 
@@ -378,6 +394,7 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		//# `Suspended` claim back to `Bound` if its device still names it.
 		if st.Live && !st.Draining && own != nil && own.Status.ClaimRef.MemberUID == st.UID {
 			claim.Status.Phase = claimsv1alpha1.ClaimBound
+			log.FromContext(ctx).Info("bound again", "device", own.Name, "token", own.Status.FencingToken)
 			return reconcile.Result{RequeueAfter: r.Resync}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 		}
 	}

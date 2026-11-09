@@ -40,19 +40,23 @@ func Run(ctx context.Context, cfg *rest.Config, o *Options) error {
 	}
 
 	clk := clock.RealClock{}
+	cached, direct, err := clients(mgr, cfg, o.LeaseDuration)
+	if err != nil {
+		return err
+	}
 	// Devices and Members are read with no cache, so every list is
 	// consistent, spec 6.3 and 8.3.
 	members := &member.Manager{
-		Client:    mgr.GetClient(),
-		Reader:    mgr.GetAPIReader(),
+		Client:    cached,
+		Reader:    direct,
 		ClusterID: o.ClusterID,
 		Lease:     o.LeaseDuration,
 		Margin:    o.LeaseMargin,
 		Clock:     clk,
 	}
 	claims := &claim.Reconciler{
-		Client:    mgr.GetClient(),
-		Reader:    mgr.GetAPIReader(),
+		Client:    cached,
+		Reader:    direct,
 		ClusterID: o.ClusterID,
 		Member:    members,
 		Resync:    o.LeaseDuration / 3,
@@ -70,8 +74,8 @@ func Run(ctx context.Context, cfg *rest.Config, o *Options) error {
 		members,
 		&claim.Orphans{Reconciler: claims, Interval: o.SweepInterval},
 		&sweeper.Sweeper{
-			Client:    mgr.GetClient(),
-			Reader:    mgr.GetAPIReader(),
+			Client:    cached,
+			Reader:    direct,
 			ClusterID: o.ClusterID,
 			Clock:     clk,
 			Interval:  o.SweepInterval,

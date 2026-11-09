@@ -45,6 +45,7 @@ func (g RESTOptionsGetter) GetRESTOptions(resource schema.GroupResource, _ runti
 	if len(g.EtcdServers) > 0 {
 		return g.etcdOptions(resource), nil
 	}
+	markProgressSupport()
 	return generic.RESTOptions{
 		StorageConfig: &storagebackend.ConfigForResource{
 			Config: storagebackend.Config{

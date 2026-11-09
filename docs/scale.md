@@ -160,13 +160,34 @@ ConsistentReadSupported` asks the etcd feature checker whether the store
 supports watch progress requests, and the checker learns that only from
 an etcd client. The DynamoDB store answers progress requests (spec 4.2),
 but nothing tells the checker, so the cache delegates every consistent
-list to the store, which queries all 10,000 items. Issue #237 is to
-register the support for the DynamoDB store. With it, a consistent list
+list to the store, which queries all 10,000 items. Issue #237 was to
+register the support for the DynamoDB store; the next paragraph has the
+result. With it, a consistent list
 reads the counter once, waits until the cache has reached it, and serves
 from memory, as etcd does. It also removes most of the `429` errors of
 issue #233, because the list no longer reads the counter twice around a
 query.
 
+**Fixed in commit 5ce2cfe.** The server now tells the feature checker
+that the DynamoDB store answers progress requests, and the cache serves
+every consistent list. At 10,000 devices the list p50 on dynamodb-local
+went from 1619 ms to 53 ms and the binds per second from 4.9 to 152.5;
+the rows are in [benchmarks.md](benchmarks.md). The `429` errors of
+issue #233 went with it, because the bench's lists no longer reach the
+table. The raw list of the store still reads the counter twice around
+the query, so #233 stays open for the lists that do reach it: the first
+fill of a cache, and a list with an exact resource version.
+
+**The trade at small pools.** A consistent list from the cache reads
+the counter once, then waits until the cache has reached that value.
+The library asks the store for progress every 100 ms while a list
+waits, and the store polls on each request, so a list waits up to
+100 ms and 50 ms at the median. At 16 devices the list p50 rose from
+9 ms to 61 ms and the binds per second of 16 claims in a tight loop
+fell from 206 to 130, while the reads per member per second fell from
+2116 to 626. A controller lists once per bind, so the read saving
+counts and the 50 ms does not; a pool of thousands of devices has no
+other option.
 **The counter still bounds the binds.** With 8 members and 64 claims on
 10,000 devices, the conflict rate is below 1 percent, because the claims
 rarely pick the same device. The bind p50 of 2.5 seconds on

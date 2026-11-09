@@ -175,26 +175,34 @@ func (w *watcher) run(start uint64, initialEvents, endBookmark bool) {
 		progress = pt.C
 	}
 	defer t.Stop()
+	//= spec/solas.md#4-2-poll
+	//# When a watcher asks for progress, the server MUST poll before it sends
+	//# the bookmark.
+	//
+	// bookmark is set by a progress request or by the progress ticker. The
+	// poll at the top of the loop runs first, so the bookmark carries a
+	// version at or above the counter at the time of the request, which is
+	// what a consistent list from the watch cache waits for.
+	bookmark := false
 	for {
 		next, ok := w.poll(last)
 		if !ok {
 			return
 		}
 		last = next
+		if bookmark {
+			bookmark = false
+			if !w.sendBookmark(last, false) {
+				return
+			}
+		}
 		select {
 		case <-w.ctx.Done():
 			return
 		case <-w.progress:
-			if !w.progressNotify {
-				continue
-			}
-			if !w.sendBookmark(last, false) {
-				return
-			}
+			bookmark = w.progressNotify
 		case <-progress:
-			if !w.sendBookmark(last, false) {
-				return
-			}
+			bookmark = true
 		case <-t.C:
 		}
 	}
