@@ -157,6 +157,11 @@ go down, and every rejected use had a token below the highest accepted.
 | Date | Commit | Store | Duration | Faults | Takeovers | History | Violations | Gatekeeper |
 |------|--------|-------|---------:|--------|----------:|---------|-----------:|------------|
 | 2026-11-09 | 35359f4 | dynamodb-local | 30 min, seed 1 | 13 store pauses of 15 to 35 s, 26 node pauses of 12 to 30 s, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 87 Lost claims created again | 226 events, 108 binds, 102 releases | 0 | 1471 uses accepted, 81 rejected, every rejection for a token below the highest accepted; highest token 19 |
+| 2026-11-09 | 58342bc | dynamodb-local, through the gatekeeper | 30 min, seed 1 | 13 store pauses, 26 node pauses, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 86 Lost claims created again | 224 events, 107 binds, 101 releases | 0 | 1309 uses accepted, 81 rejected, every rejection for a stale token; 1093 actuator calls accepted through `solas gatekeeper`, each from the holder of the token at the time |
+
+The second row runs the H100 behind `solas gatekeeper` and the demo
+actuator, spec 17. The verifier checks each call the actuator accepted
+against the holder of the token in the replayed history.
 
 The replay covered the whole run: the event retention of the DynamoDB
 store is one hour, and the run took 31 minutes. The 81 rejections are
