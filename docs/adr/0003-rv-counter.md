@@ -34,3 +34,31 @@ an event with version `n+1`.
   one item, and gains nothing.
 - The DynamoDB Streams sequence number. Streams are per shard and are
   not known at write time.
+
+## Order across resources (2026-11-09)
+
+A counter per resource gives no order between a write to a Device and a
+write to a Member. A review asked whether any rule of solas needs one.
+None does. Each rule that relates two resources rests on a conditional
+write or on a causal order, which this section lists, with the Quint
+invariant of `quint/solas.qnt` that checks it.
+
+| Rule | How it holds without one order | Invariant |
+|------|--------------------------------|-----------|
+| A `claimRef` names the UID of the member's current `Member` (spec 6.3) | The bind is a conditional write on the device, and the UID is a fact of the Member that existed when the member joined. A later sweep of that Member clears the ref by its UID, so a stale UID never passes as live. | `claimMatchesDevice`, `leaseSafety` |
+| A member creates its `Member` before it binds (spec 7.2) | Causal: the controller writes the Member, waits for the answer, then binds. A reader that sees the `claimRef` reads after the Member write completed, because reads are linearizable (spec 2.5). | `claimMatchesDevice` |
+| The sweeper lists devices first, then members (spec 8.3) | Causal, from the rule above: a `claimRef` in the device list names a Member that existed before the member list started. The order of the two lists, not an order of versions, gives the conclusion that a missing Member is gone. | `leaseSafety`, `claimMatchesDevice`; the negative model `members-first.qnt` shows the other order fails |
+| The usage set entry comes before the device write (spec 15.2) | Both writes are in one request of one server, each conditional. The entry is a reservation; the device write follows or the entry expires. No reader compares their versions. | `withinLimit` in `quint/limits.qnt` |
+| A bind raises the token (spec 5.3) | One resource; the counter of that resource orders it. | `tokensUnique`, `useMatchesBinding` |
+
+The Quint model has had one counter per resource from the start, so
+these invariants already check the rules under that assumption. A new
+kind that relates to another kind must do the same: a conditional write
+on the object it changes, and a causal order for what it reads first.
+Issue #264 gives the holder rules to any kind as a primitive.
+
+A single counter would give one order across kinds at the cost of one
+item for every write of the store. The scale rows of
+`docs/benchmarks.md` show what that item costs on dynamodb-local; a
+counter per resource spreads the load, and nothing in the protocol
+asks for more.

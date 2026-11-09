@@ -13,8 +13,6 @@ import (
 	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/phoban01/solas/pkg/apis/solas"
-	"github.com/phoban01/solas/pkg/registry/solas/device"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
 	"github.com/phoban01/solas/pkg/storage/guard"
 )
@@ -64,11 +62,6 @@ func (g RESTOptionsGetter) GetRESTOptions(resource schema.GroupResource, _ runti
 		ResourcePrefix:          "/" + resource.Group + "/" + resource.Resource,
 		CountMetricPollPeriod:   time.Minute,
 	}, nil
-}
-
-// guards holds the storage guard of each resource, below the registry.
-var guards = map[schema.GroupResource]guard.Transition{
-	solas.Resource("devices"): device.Transition,
 }
 
 // decorator builds the store of a resource, wraps it in its storage guard,

@@ -6,6 +6,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/phoban01/solas/pkg/registry/solas/member"
 	"github.com/phoban01/solas/pkg/registry/solas/memberpolicy"
 	"github.com/phoban01/solas/pkg/registry/solas/usage"
+	"github.com/phoban01/solas/pkg/storage/guard"
 )
 
 // Config is the configuration of the solas API server.
@@ -101,4 +103,10 @@ func (c CompletedConfig) New() (*Server, error) {
 		return nil, err
 	}
 	return &Server{GenericAPIServer: generic}, nil
+}
+
+// guards holds the storage guard of each resource, below the registry.
+// This file registers the kinds; the storage layer names none of them.
+var guards = map[schema.GroupResource]guard.Transition{
+	solas.Resource("devices"): device.Transition,
 }
