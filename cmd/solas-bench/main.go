@@ -502,12 +502,12 @@ func waitList(ctx context.Context, m *member, want int) ([]solas.Device, string,
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		devices, rv, err := m.list(ctx)
-		if err == nil && len(devices) == want {
+		if err == nil && benchDevices(devices) == want {
 			return devices, rv, nil
 		}
 		if time.Now().After(deadline) {
 			if err == nil {
-				err = fmt.Errorf("list has %d devices, want %d", len(devices), want)
+				err = fmt.Errorf("list has %d bench devices, want %d", benchDevices(devices), want)
 			}
 			return nil, "", fmt.Errorf("%s: %w", m.name, err)
 		}
@@ -725,3 +725,15 @@ func (s *stats) fail(ctx context.Context, err error) {
 // overBudget reports whether used request units passed the limit. A
 // limit of 0 or less means no limit.
 func overBudget(used, limit int64) bool { return limit > 0 && used > limit }
+
+// benchDevices counts the devices of the bench in a list; a shared store
+// has the devices of real clusters too.
+func benchDevices(devices []solas.Device) int {
+	n := 0
+	for i := range devices {
+		if devices[i].Spec.Attributes["bench"] == "true" {
+			n++
+		}
+	}
+	return n
+}

@@ -73,7 +73,15 @@ func (r *Replay) Apply(kind watch.EventType, d *solas.Device) {
 	defer func() { r.last[d.Name] = d.DeepCopy() }()
 	if !seen {
 		// The first state of a device, from a create or from the oldest
-		// event that the store still holds.
+		// event that the store still holds. A device that is held in it
+		// got its token before the replay began; remember that holder, so
+		// an actuator call with that token checks out.
+		if n := d.Status.ClaimRef; n != nil {
+			if r.holders[d.Name] == nil {
+				r.holders[d.Name] = map[int64]string{}
+			}
+			r.holders[d.Name][d.Status.FencingToken] = n.Member + "/" + n.Namespace + "/" + n.Name
+		}
 		return
 	}
 	r.check(old, d)
