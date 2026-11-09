@@ -26,6 +26,8 @@ The columns:
 | binds/s | successful binds per second over all members |
 | conflict% | binds that failed with `409 Conflict`, as a share of all bind attempts |
 | bind p50 ms, bind p99 ms | latency of a successful bind, from the request to the answer |
+| list p50 ms, list p99 ms | latency of the consistent list before a bind attempt |
+| sync ms | the longest time a member needed to serve the whole pool from its cache before the run, as an informer sync would |
 | lag p50 ms, lag p99 ms | time from a write to the event at a watcher, over every watcher |
 | reads/member/s | DynamoDB `GetItem` and `Query` calls per member per second, lists and polls included; not measured on etcd |
 | errors | requests that failed with another error |
@@ -139,3 +141,34 @@ Device under its prefix when it ends, and leaves the table. Run it at 2,
 8, 32, and 128 members, and add the rows here with the region and the
 date. Expect the binds per second to rise with members until the counter
 item reaches its write limit, and the p99 to rise from there.
+
+## 10,000 devices
+
+`SCALE_DEVICES=10000 devbox run scale` fills the pool with 10,000
+devices. The rows are in [benchmarks.md](benchmarks.md). What they say:
+
+**The watch cache syncs 10,000 devices in about 200 ms on both stores.**
+A member that starts reads the whole pool from the store into its cache
+in that time. That is the informer sync of a controller.
+
+**A consistent list comes from the cache on etcd and from the table on
+DynamoDB.** On etcd the list of 10,000 devices takes 7 ms at the median.
+On dynamodb-local it takes 1.6 seconds at the median and 9 seconds at
+p99, and the bind rate falls to 5 per second with 16 claims. The cause
+is in the apiserver library, not in the store: `delegator.
+ConsistentReadSupported` asks the etcd feature checker whether the store
+supports watch progress requests, and the checker learns that only from
+an etcd client. The DynamoDB store answers progress requests (spec 4.2),
+but nothing tells the checker, so the cache delegates every consistent
+list to the store, which queries all 10,000 items. Issue #237 is to
+register the support for the DynamoDB store. With it, a consistent list
+reads the counter once, waits until the cache has reached it, and serves
+from memory, as etcd does. It also removes most of the `429` errors of
+issue #233, because the list no longer reads the counter twice around a
+query.
+
+**The counter still bounds the binds.** With 8 members and 64 claims on
+10,000 devices, the conflict rate is below 1 percent, because the claims
+rarely pick the same device. The bind p50 of 2.5 seconds on
+dynamodb-local is the counter item and the slow lists in front of it,
+not the device race.
