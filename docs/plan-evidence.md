@@ -1,6 +1,6 @@
 # Plan: close the evidence gaps
 
-A review of solas against the Global Objects spike (2026-11-09) found
+A review of solas against another design (2026-11-09) found
 that solas has the stronger safety design and the weaker evidence. This
 plan closes each gap it named, and each step ends with a row in
 [benchmarks.md](benchmarks.md) or a test that CI runs. The rule of the
@@ -30,6 +30,7 @@ need a correction before the plan:
 | Generality is a claim | A recipe for a new kind, the diff of the last kind added as proof, and a CI check that the generic core names no kind | M23 |
 | No order across kinds | A written argument, checked by the Quint model, that no invariant of solas needs an order across two resources | M23 |
 | 429 on consistent lists under writes; 1.6 s lists at 10,000 devices | Issues #233 and #237 fixed; the 10,000 device rows measured again | M22 |
+| Claims suspend 2 to 4 times D after a store pause (#236) | The suspend within D plus one reconcile, measured again by `TestStoreOutage`, as a row | M22 |
 | Wide surface, thin evidence | `docs/confidence.md`: every claim of the README and the ADRs, with the test, model, or row that backs it, or the word "open" | M25 |
 | No server-side ownership | ADR 0022 decided and built: a partition per member, IAM and etcd roles per member, and a test that one member's credentials cannot write another member's objects | M24 |
 | An operator cannot see conflicts, lag, or sweeps | The metrics and the audit trail of M19 (#225 to #229) | M24 |
@@ -78,8 +79,8 @@ from the VM or from one EC2 instance in the table's region.
   default pool and 10,000 devices.
 - **Latency by region.** The same run against tables in eu-west-1,
   us-east-1, and ap-southeast-1 from the VM. The rows carry the RTT, so
-  the bind and list costs read as multiples of it, as the spike's WAN
-  rows do.
+  the bind and list costs read as multiples of it, as WAN
+  measurements do.
 - **Watch lag against poll interval.** Lag p50 and p99 and reads per
   member per second at `--poll-interval` 100 ms, 200 ms, and 500 ms.
   Then a decision in ADR 0004: keep polling, or add DynamoDB Streams
@@ -163,7 +164,7 @@ ADR 0017 moves from proposed to accepted, with the measured cost.
 - **`docs/brief.md`.** For engineers and leads who decide whether to
   back solas: the problem, the pattern, the evidence with a link to
   each row, the limits, the cost of a kind, and the open decisions. The
-  same shape as the spike's brief, so the two read side by side.
+  same shape that a decision brief has, so it reads next to others.
 
 ## Order
 
