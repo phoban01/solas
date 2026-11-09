@@ -29,12 +29,12 @@ lease D is 10 seconds, the margin 1 second, the sweep every 3 seconds.
 | 2026-11-09 | 8a17ac0 | dynamodb-local | 6 | 11 s | 4 s | yes, in 10 s |
 
 The first two rows: the suspend took longer than D because the one
-controller worker was
-held by a device list that waited for the store until the request timeout
-of 20 seconds, and the retries of failed reconciles backed off without a
-bound (#236). The last two rows: the controllers bound each request to
-D / 3 and retry a failed reconcile within D / 3, spec 16.2, so the
-suspend comes within D of the last renew plus one request.
+controller worker was held by a device list that waited for the store
+until the request timeout of 20 seconds, and the retries of failed
+reconciles backed off without a bound (#236). The last two rows: the
+controllers bound each request to D / 3 and retry a failed reconcile
+within D / 3, spec 16.2, so the suspend comes within D of the last
+renew plus one request.
 
 ## Scale
 
