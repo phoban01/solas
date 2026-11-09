@@ -71,3 +71,33 @@ item for every write of the store. The scale rows of
 `docs/benchmarks.md` show what that item costs on dynamodb-local; a
 counter per resource spreads the load, and nothing in the protocol
 asks for more.
+
+## Amendment: batched writes (2026-11-09)
+
+The rows of docs/benchmarks.md on real tables showed the Device
+resource at 12 to 15 binds per second from 50 ms away and 3.5 from
+140 ms away, whatever the number of writers. The ceiling moved with the
+round trip, so it was the write loop: each writer read the counter and
+sent its own transaction, DynamoDB cancelled all but one of the
+transactions that raced on the counter item, and the losers read again.
+One write got through per two round trips.
+
+Decision: a server carries the writes of a resource that arrive together
+in one transaction, spec 2.3. The counter moves from `n` to `n + k`, and
+the `k` writes get `n + 1` to `n + k` in order, with an object action and
+an event put each. The rules of this ADR hold as before: versions
+strictly increase in commit order with no gap, and the event log is
+complete up to the counter, because the batch commits or not at all.
+A write whose own object condition fails leaves the batch with a
+conflict; the rest try again. The Quint store model has the batched
+write, and `TestCommitBatchesConcurrentWrites` shows forty concurrent
+writes in fewer transactions with consecutive versions.
+
+What it gives: the writers of one server share a round trip, so a
+server's throughput grows with its concurrency, up to 25 writes per
+transaction. What it does not give: two servers still race on the
+counter, and a server far from the table still waits two round trips
+per batch. A counter per shard of a resource would lift that; issue #267
+holds it. The claim controller runs one worker, so a cluster sends one
+bind at a time and gains nothing from the batch until it runs several;
+issue #268 is that.
