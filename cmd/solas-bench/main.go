@@ -58,6 +58,8 @@ type options struct {
 	memberLease time.Duration
 	// maxUnits stops a run whose DynamoDB request units pass it.
 	maxUnits int64
+	// pollInterval is the watch poll interval of the DynamoDB store.
+	pollInterval time.Duration
 }
 
 func main() {
@@ -70,6 +72,7 @@ func main() {
 	fs.IntVar(&o.devices, "devices", 0, "devices in the pool; 0 means members * claims")
 	fs.DurationVar(&o.duration, "duration", 10*time.Second, "how long the claims run")
 	fs.BoolVar(&o.header, "header", true, "print the header row")
+	fs.DurationVar(&o.pollInterval, "poll-interval", dynamo.DefaultPollInterval, "how often a watch polls the event log of the DynamoDB store, spec 4.2")
 	fs.Int64Var(&o.maxUnits, "max-units", 10_000_000, "stop the run when its DynamoDB request units (calls counted by the tool) pass this; a cost guard on a real table")
 	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")
 	_ = fs.Parse(os.Args[1:])
@@ -140,7 +143,7 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 		}
 	}
 	c := &counting{API: client}
-	g.Dynamo = dynamo.Config{Client: c, Table: sc.Table, EventRetention: dynamo.DefaultEventRetention, PollInterval: dynamo.DefaultPollInterval}
+	g.Dynamo = dynamo.Config{Client: c, Table: sc.Table, EventRetention: dynamo.DefaultEventRetention, PollInterval: o.pollInterval}
 	return g, c, nil
 }
 
