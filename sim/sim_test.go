@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	claimsv1alpha1 "github.com/phoban01/solas/pkg/apis/claims/v1alpha1"
 )
 
 // seeds returns the seeds of this shard: SIM_SEEDS seeds from SIM_START,
@@ -234,18 +236,53 @@ func outageRun(t *testing.T, readGap time.Duration) []string {
 		w.log("%s sweep: %s", c.name, errText(c.sweeper.Run(ctx)))
 	}
 	check()
+	// Each cluster reconciles its claims until the binds land, so the
+	// outage finds Bound claims to suspend.
+	for range 5 {
+		for _, c := range w.clusters {
+			for _, k := range c.claimKeys(ctx) {
+				w.log("%s reconcile %s: %s", c.name, k.Name, errText(c.reconcile(ctx, k)))
+			}
+		}
+		check()
+	}
+	if n := countPhase(ctx, t, w, claimsv1alpha1.ClaimBound); n == 0 {
+		t.Fatal("no Bound claim at the start of the outage; the scenario does not test spec 16.2")
+	}
 
 	w.outage = true
 	w.log("store outage")
-	// 90 seconds, three times D. Each cluster keeps trying to renew and to
-	// sweep, and each call to the store fails.
+	// 90 seconds, three times D. Each cluster keeps trying to renew, to
+	// reconcile its claims, and to sweep, and each call to the store fails.
 	for range 90 {
 		for _, c := range w.clusters {
 			w.log("%s member tick: %s", c.name, errText(c.members.Tick(ctx)))
+			for _, k := range c.claimKeys(ctx) {
+				w.log("%s reconcile %s: %s", c.name, k.Name, errText(c.reconcile(ctx, k)))
+			}
 			w.log("%s sweep: %s", c.name, errText(c.sweeper.Run(ctx)))
 		}
 		w.tick()
 		check()
+	}
+	//= spec/solas.md#16-2-claims
+	//= type=test
+	//# The controller MUST set a `Bound` claim to `Suspended` without a read of
+	//# the store, when its member is not live, section 6.5.
+	//
+	// Three times D into the outage, no member is live, so no claim is
+	// Bound. The device list fails during the outage, so the controller
+	// cannot read the store before it suspends.
+	for _, c := range w.clusters {
+		var claims claimsv1alpha1.DeviceClaimList
+		if err := c.client.List(ctx, &claims); err != nil {
+			t.Fatalf("%s: list local claims: %v", c.name, err)
+		}
+		for _, cl := range claims.Items {
+			if cl.Status.Phase == claimsv1alpha1.ClaimBound || cl.Status.Phase == claimsv1alpha1.ClaimPreempting {
+				t.Errorf("%s/%s is %s three times D into the store outage, want Suspended", c.name, cl.Name, cl.Status.Phase)
+			}
+		}
 	}
 	w.outage = false
 	w.log("store back")
@@ -272,6 +309,24 @@ func outageRun(t *testing.T, readGap time.Duration) []string {
 		}
 	}
 	return swept
+}
+
+// countPhase returns how many local claims of all clusters are in phase p.
+func countPhase(ctx context.Context, t *testing.T, w *World, p claimsv1alpha1.ClaimPhase) int {
+	t.Helper()
+	n := 0
+	for _, c := range w.clusters {
+		var claims claimsv1alpha1.DeviceClaimList
+		if err := c.client.List(ctx, &claims); err != nil {
+			t.Fatalf("%s: list local claims: %v", c.name, err)
+		}
+		for _, cl := range claims.Items {
+			if cl.Status.Phase == p {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 //= spec/solas.md#8-1-expiry-on-the-observer

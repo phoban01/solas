@@ -21,10 +21,29 @@ const (
 // poll, spec 11.2.
 var finalized atomic.Int32
 
-func init() { finalized.Store(1) }
+// known is false from Forget until the next SetFinalized. It is true by
+// default, so code that does not run the server, such as a test or the
+// migrate tool, writes without a read of the store.
+var known atomic.Bool
+
+func init() {
+	finalized.Store(1)
+	known.Store(true)
+}
 
 // SetFinalized records the finalized format that the server read.
-func SetFinalized(f int32) { finalized.Store(f) }
+func SetFinalized(f int32) {
+	finalized.Store(f)
+	known.Store(true)
+}
+
+// Forget marks the finalized format and the epoch as not read. The server
+// calls it before it serves, and SetFinalized ends it, spec 16.1.
+func Forget() { known.Store(false) }
+
+// Known reports whether the server has read the finalized format and the
+// epoch of the store since the last Forget.
+func Known() bool { return known.Load() }
 
 // Write returns the format of each write: the finalized format, spec 11.2.
 func Write() int { return int(finalized.Load()) }

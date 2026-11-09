@@ -1072,3 +1072,74 @@ It MUST NOT remove such an entry before a grace that is longer than the
 deadline of a request has passed since the entry was added, by its own
 clock.
 A bind still in flight then cannot land after its entry is gone.
+
+## 16. Store outage
+
+The shared store can stop answering: the table or the etcd cluster is
+down, or the network to it is cut.
+This section says what a member cluster does then, and how it recovers.
+Sections 6 to 8 give most of the rules.
+This section collects them and adds the rules for the server.
+
+### 16.1. The server
+
+The readiness of the server MUST NOT depend on the store.
+The server MUST start when the DynamoDB store does not answer.
+The kube-apiserver of the host cluster reaches the solas resources
+through the APIService, and the APIService is available only while a
+solas Pod is ready.
+When the APIService is not available, discovery fails, and namespace
+deletion and garbage collection in the host cluster stop.
+The host cluster must not depend on the shared store in this way.
+So the server starts without the store, serves discovery, and reports
+ready.
+Only the requests that need the store fail.
+
+The etcd store is the etcd3 storage of `k8s.io/apiserver`, which waits
+at start until it reaches etcd, as the kube-apiserver does.
+A server on the etcd store needs etcd at start.
+An outage after the start does not stop it.
+
+Until the server has read the finalized format and the epoch of the
+store, it MUST reject every write with `503 ServiceUnavailable`.
+A write before that read could use a wrong format, section 11.2, or a
+wrong epoch, section 13.
+A write that fails because the server cannot reach the store MUST fail
+with `503 ServiceUnavailable`.
+A client retries a `503`, and a controller requeues.
+The DynamoDB store bounds each call to the store with a timeout of 10
+seconds, so a store that hangs fails the request instead of holding it.
+The server also bounds each request to 20 seconds, so a request that
+waits for a store that hangs fails, and does not hold a controller
+worker for long.
+
+Reads come from the watch cache while the cache is ready.
+When the watch to the store fails, the cache is not ready, and a list
+fails with `429 TooManyRequests` or `503 ServiceUnavailable` until the
+store returns.
+
+### 16.2. Claims
+
+The controller MUST set a `Bound` claim to `Suspended` without a read of
+the store, when its member is not live, section 6.5.
+During an outage no renew lands.
+So the member is not live from `S + D - M` on its own clock, section 7.4,
+and no bind happens, section 6.2.
+A workload uses its device until its claim is `Suspended`.
+Fencing tokens protect the device after that, section 6.6.
+A claim that is created during an outage stays `Pending` until the store
+returns.
+Local claims live in the etcd of the cluster, so a user can create, read,
+and delete them during an outage.
+A delete waits for the release of its device, section 6.4, until the
+store returns.
+
+### 16.3. Recovery
+
+When the store returns, each member renews within `D / 3`.
+Its controller then sets each `Suspended` claim back to `Bound` if its
+device still names it, section 6.5.
+No sweeper deletes a `Member` right after the outage, because an observer
+counts only time during which it reads the member list, section 8.1.
+So a holder keeps its devices and their fencing tokens across an outage
+of any length, as long as it renews when the store returns.

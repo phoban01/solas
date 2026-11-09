@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/endpoints/openapi"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
@@ -16,6 +17,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	basecompatibility "k8s.io/component-base/compatibility"
 	baseversion "k8s.io/component-base/version"
+	"k8s.io/klog/v2"
 	netutils "k8s.io/utils/net"
 
 	"github.com/phoban01/solas/pkg/apiserver"
@@ -28,7 +30,6 @@ import (
 type Options struct {
 	RecommendedOptions *genericoptions.RecommendedOptions
 	Registry           basecompatibility.ComponentGlobalsRegistry
-
 	// StorageVersion is the version of the group that objects are stored
 	// in, spec 11.2.
 	StorageVersion string
@@ -40,6 +41,11 @@ type Options struct {
 	// All member clusters must use the same prefix to share state.
 	Prefix string
 }
+
+// RequestTimeout bounds each request. A request that waits for a store
+// that hangs fails after this long, so it does not hold a controller
+// worker, spec 16.1.
+const RequestTimeout = 20 * time.Second
 
 // NewOptions returns the default options.
 func NewOptions() *Options {
@@ -76,13 +82,10 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	cmd.SetContext(ctx)
 	flags := cmd.Flags()
 	o.RecommendedOptions.AddFlags(flags)
-
 	//= spec/solas.md#2-1-table
 	//# All member clusters MUST use the same table.
-
 	//= spec/solas.md#2-1-table
 	//# The table MUST be in one AWS region.
-
 	//= spec/solas.md#2-6-storage-url
 	//# All member clusters MUST use the same store.
 	flags.StringVar(&o.StorageURL, "storage-url", o.StorageURL,
@@ -93,7 +96,6 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	flags.DurationVar(&o.EventRetention, "event-retention", o.EventRetention, "How long events stay in the event log of the DynamoDB store.")
 	flags.DurationVar(&o.PollInterval, "poll-interval", o.PollInterval, "How often a watch polls the event log of the DynamoDB store.")
 	flags.StringVar(&o.Prefix, "storage-prefix", o.Prefix, "Key prefix in the store. All member clusters must use the same prefix.")
-
 	_, _ = o.Registry.ComponentGlobalsOrRegister(basecompatibility.DefaultKubeComponent,
 		basecompatibility.NewEffectiveVersionFromString(baseversion.DefaultKubeBinaryVersion, "", ""),
 		utilfeature.DefaultMutableFeatureGate)
@@ -117,19 +119,19 @@ func (o *Options) Validate() error {
 	return utilerrors.NewAggregate(errs)
 }
 
-// Config builds the server configuration.
+// Config builds the server configuration. It does not call the store, so
+// the server can start while the store does not answer, spec 16.1.
 func (o *Options) Config(ctx context.Context) (*apiserver.Config, error) {
 	if err := o.RecommendedOptions.SecureServing.MaybeDefaultWithSelfSignedCerts(
 		"localhost", nil, []net.IP{netutils.ParseIPSloppy("127.0.0.1")}); err != nil {
 		return nil, fmt.Errorf("create self-signed certificates: %w", err)
 	}
-
 	getter, err := o.restOptionsGetter(ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	c := genericapiserver.NewRecommendedConfig(apiserver.Codecs)
+	c.RequestTimeout = RequestTimeout
 	namer := openapi.NewDefinitionNamer(apiserver.Scheme)
 	c.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, namer)
 	c.OpenAPIConfig.Info.Title = "solas"
@@ -139,7 +141,6 @@ func (o *Options) Config(ctx context.Context) (*apiserver.Config, error) {
 	c.OpenAPIV3Config.Info.Version = "v1alpha1"
 	c.FeatureGate = o.Registry.FeatureGateFor(basecompatibility.DefaultKubeComponent)
 	c.EffectiveVersion = o.Registry.EffectiveVersionFor(basecompatibility.DefaultKubeComponent)
-
 	if err := o.RecommendedOptions.ApplyTo(c); err != nil {
 		return nil, err
 	}
@@ -170,14 +171,6 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 	if err != nil {
 		return getter, err
 	}
-	//= spec/solas.md#2-6-storage-url
-	//# The query key `create-table` with the value `true` makes the server
-	//# create the table at start when it does not exist.
-	if sc.CreateTable {
-		if err := dynamo.EnsureTable(ctx, client, sc.Table); err != nil {
-			return getter, err
-		}
-	}
 	getter.Dynamo = dynamo.Config{
 		Client:         client,
 		Table:          sc.Table,
@@ -185,6 +178,42 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 		PollInterval:   o.PollInterval,
 	}
 	return getter, nil
+}
+
+// storeRetry is how long the server waits between two tries to reach a
+// store that does not answer.
+const storeRetry = 2 * time.Second
+
+//= spec/solas.md#16-1-the-server
+//# The server MUST start when the DynamoDB store does not answer.
+
+//= spec/solas.md#2-6-storage-url
+//# The query key `create-table` with the value `true` makes the server
+//# create the table at start when it does not exist.
+
+// EnsureStore prepares the store once it answers: it creates the DynamoDB
+// table when the storage URL asks for it. It tries again every storeRetry
+// until the store answers or ctx ends, so the server serves while it
+// waits.
+func (o *Options) EnsureStore(ctx context.Context) error {
+	sc, err := storageurl.Parse(o.StorageURL)
+	if err != nil {
+		return fmt.Errorf("--storage-url: %w", err)
+	}
+	if sc.Kind != storageurl.DynamoDB || !sc.CreateTable {
+		return nil
+	}
+	client, err := storageurl.DynamoClient(ctx, sc)
+	if err != nil {
+		return err
+	}
+	return wait.PollUntilContextCancel(ctx, storeRetry, true, func(ctx context.Context) (bool, error) {
+		if err := dynamo.EnsureTable(ctx, client, sc.Table); err != nil {
+			klog.InfoS("waiting for the store", "table", sc.Table, "err", err.Error())
+			return false, nil
+		}
+		return true, nil
+	})
 }
 
 // Run starts the server and blocks until ctx ends.
@@ -197,5 +226,10 @@ func (o *Options) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	go func() {
+		if err := o.EnsureStore(ctx); err != nil {
+			klog.ErrorS(err, "cannot prepare the store")
+		}
+	}()
 	return server.GenericAPIServer.PrepareRun().RunWithContext(ctx)
 }

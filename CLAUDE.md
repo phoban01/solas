@@ -114,6 +114,9 @@ Claude Code session, so heavy jobs must not overlap.
 - Read and write scoping in the store (proposed): a shared device catalog
   with minimal holder data, and a partition per member for its own objects
   ([docs/adr/0022-read-scoping.md](docs/adr/0022-read-scoping.md)).
+- The server starts and reports ready without the store; writes fail
+  with 503 until it has read the store
+  ([docs/adr/0024-start-without-store.md](docs/adr/0024-start-without-store.md)).
 
 ## Writing
 

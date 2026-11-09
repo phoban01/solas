@@ -49,6 +49,7 @@ up)
   endpoint
   ;;
 down)
+  docker unpause "$ddb" "$etcd" >/dev/null 2>&1 || true
   docker rm -f "$ddb" "$etcd" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   ;;

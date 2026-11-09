@@ -274,6 +274,25 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		return reconcile.Result{}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 	}
 
+	//= spec/solas.md#16-2-claims
+	//# The controller MUST set a `Bound` claim to `Suspended` without a read of
+	//# the store, when its member is not live, section 6.5.
+
+	//= spec/solas.md#6-5-phases
+	//# When the controller's member is not live by its own clock, the
+	//# controller MUST set each `Bound` claim to `Suspended`.
+
+	//= spec/solas.md#7-6-leave
+	//# The member MUST then set each `Bound` claim to `Suspended`.
+	//
+	// This comes before the device list: in a store outage the list fails,
+	// and the claim must still go to Suspended.
+	if p := claim.Status.Phase; (p == claimsv1alpha1.ClaimBound || p == claimsv1alpha1.ClaimPreempting) && (!st.Live || st.Draining) {
+		setPhase(claim, claimsv1alpha1.ClaimSuspended)
+		claim.Status.PreemptionSeenAt = nil
+		return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Status().Update(ctx, claim))
+	}
+
 	devices, err := r.listDevices(ctx)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -329,17 +348,8 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 
 	switch claim.Status.Phase {
 	case claimsv1alpha1.ClaimBound, claimsv1alpha1.ClaimPreempting:
-		//= spec/solas.md#6-5-phases
-		//# When the controller's member is not live by its own clock, the
-		//# controller MUST set each `Bound` claim to `Suspended`.
-
-		//= spec/solas.md#7-6-leave
-		//# The member MUST then set each `Bound` claim to `Suspended`.
-		if !st.Live || st.Draining {
-			setPhase(claim, claimsv1alpha1.ClaimSuspended)
-			claim.Status.PreemptionSeenAt = nil
-			return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Status().Update(ctx, claim))
-		}
+		// The member is live and not draining: the check above returned
+		// otherwise.
 		if changed, err := r.startTransfer(ctx, claim, own); changed || err != nil {
 			return reconcile.Result{Requeue: true}, err
 		}

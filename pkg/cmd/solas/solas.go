@@ -58,19 +58,19 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	return cmd
 }
 
+//= spec/solas.md#16-1-the-server
+//# The readiness of the server MUST NOT depend on the store.
+
 // Run starts the API server part, waits until the cluster serves the
 // solas API through it, then runs the controller part. It returns when
 // either part stops.
+//
+// Nothing here waits for the store. The server serves discovery and
+// reports ready while the store does not answer; the storage guard
+// rejects writes until runStore has read the finalized format and the
+// epoch, spec 16.1.
 func (o *Options) Run(ctx context.Context) error {
-	store, err := migrate.Open(ctx, o.Server.StorageURL, o.Server.Prefix)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	if err := checkFormat(ctx, store); err != nil {
-		return err
-	}
-
+	format.Forget()
 	config, err := o.Server.Config(ctx)
 	if err != nil {
 		return err
@@ -87,14 +87,57 @@ func (o *Options) Run(ctx context.Context) error {
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return prepared.RunWithContext(ctx) })
-	g.Go(func() error { return watchFormat(ctx, store) })
-	g.Go(func() error { return cleanUsage(ctx, store, o.Controller.ClusterID) })
+	g.Go(func() error { return o.runStore(ctx) })
 	g.Go(func() error {
 		if err := waitForAPI(ctx, restConfig); err != nil {
 			return err
 		}
 		return controller.Run(ctx, restConfig, o.Controller)
 	})
+	return g.Wait()
+}
+
+// storeRetry is how long runStore waits between two tries to reach a
+// store that does not answer.
+const storeRetry = 2 * time.Second
+
+// runStore waits until the store answers, reads the finalized format and
+// the epoch, and then keeps them and the usage set up to date. It returns
+// an error, which stops the process, when the store is finalized above
+// this release, spec 11.5.
+func (o *Options) runStore(ctx context.Context) error {
+	if err := o.Server.EnsureStore(ctx); err != nil {
+		return err
+	}
+	log := ctrl.Log.WithName("store")
+	var store *migrate.Store
+	err := wait.PollUntilContextCancel(ctx, storeRetry, true, func(ctx context.Context) (bool, error) {
+		s, err := migrate.Open(ctx, o.Server.StorageURL, o.Server.Prefix)
+		if err != nil {
+			log.Info("waiting for the store", "err", err.Error())
+			return false, nil
+		}
+		if err := checkFormat(ctx, s); err != nil {
+			s.Close()
+			var tooNew *tooNewError
+			if errors.As(err, &tooNew) {
+				return false, err
+			}
+			log.Info("waiting for the store", "err", err.Error())
+			return false, nil
+		}
+		store = s
+		return true, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	log.Info("read the store", "finalizedFormat", format.Write(), "epoch", format.Epoch())
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return watchFormat(ctx, store) })
+	g.Go(func() error { return cleanUsage(ctx, store, o.Controller.ClusterID) })
 	return g.Wait()
 }
 
@@ -119,28 +162,36 @@ func waitForAPI(ctx context.Context, cfg *rest.Config) error {
 // formatPoll is how often a running server reads the finalized format.
 const formatPoll = 30 * time.Second
 
+// tooNewError says that the store is finalized above this release.
+type tooNewError struct{ finalized int32 }
+
+func (e *tooNewError) Error() string {
+	return fmt.Sprintf("the store is finalized at format %d, and this release supports formats %d to %d; run a newer release",
+		e.finalized, format.Min, format.Max)
+}
+
 //= spec/solas.md#11-5-rollback
 //# A server MUST refuse to start when the finalized format is above its
 //# maximum format.
 
 // checkFormat reads the finalized format of the store and writes in it
-// from then on, spec 11.2. It fails when the store is finalized above the
-// maximum of this release.
+// from then on, spec 11.2. It fails with a tooNewError when the store is
+// finalized above the maximum of this release; the process then exits,
+// right after its start when the store answered at once.
 func checkFormat(ctx context.Context, s *migrate.Store) error {
 	f, err := s.Finalized(ctx)
 	if err != nil {
 		return fmt.Errorf("read the finalized format: %w", err)
 	}
 	if f > format.Max {
-		return fmt.Errorf("the store is finalized at format %d, and this release supports formats %d to %d; run a newer release",
-			f, format.Min, format.Max)
+		return &tooNewError{finalized: f}
 	}
-	format.SetFinalized(f)
 	e, err := s.Epoch(ctx)
 	if err != nil {
 		return fmt.Errorf("read the store epoch: %w", err)
 	}
 	format.SetEpoch(e)
+	format.SetFinalized(f)
 	return nil
 }
 
@@ -155,13 +206,13 @@ func watchFormat(ctx context.Context, s *migrate.Store) error {
 			return nil
 		case <-time.After(formatPoll):
 		}
-		f, err := s.Finalized(ctx)
-		if err != nil {
-			log.Info("cannot read the finalized format", "err", err.Error())
-			continue
-		}
-		if err := checkFormat(ctx, s); err != nil && f > format.Max {
+		err := checkFormat(ctx, s)
+		var tooNew *tooNewError
+		switch {
+		case errors.As(err, &tooNew):
 			return err
+		case err != nil:
+			log.Info("cannot read the finalized format", "err", err.Error())
 		}
 	}
 }
