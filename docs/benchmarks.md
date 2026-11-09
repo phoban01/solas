@@ -36,17 +36,43 @@ Method: `solas-bench`, run by `devbox run scale`; [scale.md](scale.md)
 explains the columns and what the numbers say. Each run lasted 10
 seconds with 8 claims per member.
 
-| Date | Commit | Store | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
-|------|--------|-------|--------:|--------:|--------:|-----------:|------------:|------------:|-----------:|-----------:|---------------:|-------:|
-| 2026-11-09 | 47da523 | dynamodb-local | 2 | 16 | 188.8 | 13.5 | 5.5 | 83.2 | 106.5 | 202.4 | 1970.4 | 10 |
-| 2026-11-09 | 47da523 | dynamodb-local | 8 | 64 | 38.7 | 53.3 | 153.9 | 1359.8 | 106.2 | 201.0 | 220.2 | 0 |
-| 2026-11-09 | 47da523 | dynamodb-local | 32 | 256 | 25.7 | 48.2 | 1822.9 | 10628.9 | 160.2 | 933.1 | 50.9 | 0 |
-| 2026-11-09 | 47da523 | etcd | 2 | 16 | 3862.6 | 29.5 | 0.5 | 5.1 | 0.1 | 2.3 | - | 0 |
-| 2026-11-09 | 47da523 | etcd | 8 | 64 | 3313.1 | 32.3 | 2.6 | 16.7 | 1.0 | 9.3 | - | 0 |
-| 2026-11-09 | 47da523 | etcd | 32 | 256 | 1169.6 | 36.2 | 20.0 | 81.0 | 30.4 | 501.1 | - | 0 |
+| Date | Commit | Store | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | e76c984 | dynamodb-local | 2 | 16 | 206.2 | 13.2 | 5.3 | 65.4 | 9.2 | 444.9 | 6.4 | 102.0 | 200.7 | 2115.6 | 16 |
+| 2026-11-09 | e76c984 | dynamodb-local | 8 | 64 | 43.0 | 52.3 | 139.7 | 1229.6 | 5.4 | 83.6 | 3.9 | 99.1 | 200.2 | 250.5 | 0 |
+| 2026-11-09 | e76c984 | dynamodb-local | 32 | 256 | 20.6 | 48.5 | 2080.7 | 10605.2 | 30.1 | 1550.3 | 10.9 | 121.6 | 685.5 | 57.1 | 0 |
+| 2026-11-09 | e76c984 | etcd | 2 | 16 | 4030.1 | 29.6 | 0.5 | 4.8 | 0.6 | 4.9 | 108.0 | 0.1 | 2.0 | - | 0 |
+| 2026-11-09 | e76c984 | etcd | 8 | 64 | 3336.2 | 32.8 | 2.6 | 16.7 | 3.4 | 18.8 | 106.4 | 1.0 | 9.4 | - | 0 |
+| 2026-11-09 | e76c984 | etcd | 32 | 256 | 1117.4 | 37.4 | 18.9 | 68.4 | 46.6 | 793.6 | 110.6 | 27.2 | 638.4 | - | 0 |
 
-The 10 errors in the first row are `429` from the consistent list under
-sustained writes, issue #233.
+These rows replace the six rows of commit 47da523, which the same runs
+produced with an earlier tool that started the clock before every
+worker ran and had no list or sync columns. The numbers agree within
+the noise of a 10 second run. The 16 errors in the first row are `429`
+from the consistent list under sustained writes, issue #233.
+
+### 10,000 devices
+
+The same tool with `SCALE_DEVICES=10000`, 20 seconds per run, 8 claims
+per member, at 2 and 8 members. 32 members with 32 caches of 10,000
+devices and 256 claims that each copy the pool on every list did not fit
+the memory limit of the VM, so that row waits for a larger host.
+
+| Date | Commit | Store | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | e76c984 | dynamodb-local | 2 | 10000 | 4.9 | 0.0 | 124.1 | 1120.3 | 1618.6 | 8889.2 | 196.2 | 156.7 | 380.3 | 110.1 | 1 |
+| 2026-11-09 | e76c984 | dynamodb-local | 8 | 10000 | 7.7 | 0.6 | 2476.0 | 16023.5 | 587.5 | 3753.0 | 179.3 | 116.8 | 248.8 | 62.7 | 0 |
+| 2026-11-09 | e76c984 | etcd | 2 | 10000 | 934.4 | 0.1 | 1.2 | 12.6 | 7.3 | 46.9 | 204.4 | 0.4 | 28.7 | - | 0 |
+| 2026-11-09 | e76c984 | etcd | 8 | 10000 | 750.3 | 0.4 | 6.1 | 59.9 | 38.5 | 250.0 | 206.9 | 20.3 | 189.1 | - | 0 |
+
+On etcd a consistent list of 10,000 devices takes 7 ms, because the
+watch cache serves it. On dynamodb-local it takes 1.6 seconds at the
+median and 9 seconds at p99, because the cache does not serve it: the
+apiserver library serves a consistent list from the cache only when its
+etcd feature checker reports support for watch progress requests, and
+nothing reports that for the DynamoDB store. Every list then queries the
+table for all 10,000 items. Issue #237 tracks it; [scale.md](scale.md)
+has the detail. Both caches sync the pool in about 200 ms.
 
 ## Soak
 
