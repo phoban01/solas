@@ -1,0 +1,74 @@
+# The gatekeeper in front of an actuator, spec 17. One per actuator. It
+# reads devices through the solas API of its cluster and forwards a
+# change only to the holder with the current token. The demo fills in
+# ACTUATOR_URL; a real deployment sets the actuator's URL and gives only
+# this Pod the actuator's credentials.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: solas-gatekeeper
+  namespace: solas-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: solas-gatekeeper
+rules:
+  - apiGroups: ["solas.dev"]
+    resources: ["devices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: solas-gatekeeper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: solas-gatekeeper
+subjects:
+  - kind: ServiceAccount
+    name: solas-gatekeeper
+    namespace: solas-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solas-gatekeeper
+  namespace: solas-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: solas-gatekeeper}
+  template:
+    metadata:
+      labels: {app: solas-gatekeeper}
+    spec:
+      serviceAccountName: solas-gatekeeper
+      containers:
+        - name: gatekeeper
+          image: solas:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - gatekeeper
+            - --upstream=ACTUATOR_URL
+            - --listen=:9443
+            - --device-attribute=machineID
+          ports:
+            - containerPort: 9443
+          readinessProbe:
+            httpGet: {path: /log, port: 9443}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solas-gatekeeper
+  namespace: solas-system
+spec:
+  selector: {app: solas-gatekeeper}
+  ports:
+    - port: 9443
+      targetPort: 9443

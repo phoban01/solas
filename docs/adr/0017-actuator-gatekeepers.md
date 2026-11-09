@@ -1,6 +1,6 @@
 # ADR 0017: Gatekeepers for actuators
 
-Status: proposed (#230).
+Status: accepted; spec section 17 (2026-11-09)
 
 ## Context
 

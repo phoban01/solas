@@ -126,10 +126,29 @@ func TestStoreOutage(t *testing.T) {
 			t.Logf("pause %s", container)
 			run(t, "", "docker", "pause", container)
 			start := time.Now()
+			lastReport := start
 			eventually(t, 120*time.Second, "every Bound claim Suspended", func(ctx context.Context) bool {
-				return allPhase(ctx, clients, before, claimsv1alpha1.ClaimSuspended)
+				ok := allPhase(ctx, clients, before, claimsv1alpha1.ClaimSuspended)
+				if !ok && time.Since(lastReport) >= 10*time.Second {
+					lastReport = time.Now()
+					for name, c := range clients {
+						for key, p := range phases(ctx, c, before[name]) {
+							if p != claimsv1alpha1.ClaimSuspended {
+								t.Logf("%s after the pause: %s/%s is still %s", time.Since(start).Round(time.Second), name, key, p)
+							}
+						}
+					}
+				}
+				return ok
 			})
-			t.Logf("every Bound claim Suspended %s after the pause", time.Since(start).Round(time.Second))
+			took := time.Since(start)
+			t.Logf("every Bound claim Suspended %s after the pause", took.Round(time.Second))
+			// The lease D is 10 s in the e2e clusters. A suspend later than
+			// three D says that something held the controller; keep the logs.
+			if took > 30*time.Second {
+				t.Logf("the suspend took more than 3 D; the state and the logs follow")
+				dumpState(t)
+			}
 
 			// A new claim gets its phase from the controller, which needs
 			// no store for that. Then it stays Pending: its member is not

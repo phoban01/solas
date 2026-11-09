@@ -1163,3 +1163,49 @@ No sweeper deletes a `Member` right after the outage, because an observer
 counts only time during which it reads the member list, section 8.1.
 So a holder keeps its devices and their fencing tokens across an outage
 of any length, as long as it renews when the store returns.
+
+## 17. Gatekeeper
+
+A fencing token protects a device only when the thing that changes the
+device checks the token, section 6.6.
+Real devices are driven through actuators, such as a machine
+provisioning service, that check nothing.
+A gatekeeper sits in front of such an actuator as a proxy of its API,
+ADR 0017.
+Only the gatekeeper holds the actuator's credentials, so every change
+goes through it.
+
+### 17.1. Request
+
+A request that changes a device MUST carry the claim of its workload in
+the header `Solas-Claim`, as `member/namespace/name`.
+It MUST carry the fencing token of the claim in the header
+`Solas-Fencing-Token`.
+A request with the method `GET`, `HEAD`, or `OPTIONS` reads and MUST
+pass through without a check.
+
+### 17.2. Check
+
+The gatekeeper MUST map a request to a device by a value in the request
+path and a device attribute that holds that value.
+The attribute name and the path pattern are settings of the gatekeeper.
+The gatekeeper MUST read the device from the solas API of its cluster
+with a consistent read before it forwards a request.
+It MUST forward the request only when the `claimRef` of the device names
+the member, namespace, and name of the header, and the `fencingToken`
+of the device equals the token of the header.
+It MUST reject every other request that changes a device with
+`403 Forbidden`, and say why.
+A request whose path names no device MUST fail with `403 Forbidden`.
+The token in the store only goes up, section 5.3, so this check is at
+least as strict as the rule of section 6.6, and the gatekeeper keeps no
+state of its own.
+
+### 17.3. Lock
+
+The gatekeeper MUST hold a lock per device from the check until the
+actuator answers.
+So a bind of a new holder cannot land between the check and the change.
+One gatekeeper per actuator keeps the lock local.
+A second replica would need the lock in the store, which this version
+does not do.

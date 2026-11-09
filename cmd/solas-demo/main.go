@@ -3,7 +3,9 @@
 // with the token of its claim, spec 6.6.
 //
 //	solas-demo device   --listen :9000
+//	solas-demo actuator --listen :9100
 //	solas-demo workload --namespace ns --claim name --cluster-id a --device http://host:9000
+//	solas-demo workload --namespace ns --claim name --cluster-id a --actuator http://gatekeeper:9443 --machine m1
 package main
 
 import (
@@ -24,7 +26,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: solas-demo device|workload [flags]")
+		fmt.Fprintln(os.Stderr, "usage: solas-demo device|actuator|workload [flags]")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -33,6 +35,8 @@ func main() {
 	switch os.Args[1] {
 	case "device":
 		err = runDevice(ctx, os.Args[2:])
+	case "actuator":
+		err = runActuator(ctx, os.Args[2:])
 	case "workload":
 		err = runWorkload(ctx, os.Args[2:])
 	default:
@@ -66,12 +70,14 @@ func runWorkload(ctx context.Context, args []string) error {
 	ns := fs.String("namespace", "default", "namespace of the claim")
 	name := fs.String("claim", "", "name of the claim")
 	clusterID := fs.String("cluster-id", "", "ID of this member cluster")
-	dev := fs.String("device", "", "URL of the device gatekeeper")
+	dev := fs.String("device", "", "URL of the demo device, which checks tokens itself")
+	actuator := fs.String("actuator", "", "URL of the gatekeeper in front of an actuator, spec 17")
+	machine := fs.String("machine", "", "machine ID at the actuator, with --actuator")
 	refresh := fs.Duration("refresh", 5*time.Second, "how often to read the claim")
 	every := fs.Duration("every", time.Second, "how often to use the device")
 	_ = fs.Parse(args)
-	if *name == "" || *dev == "" || *clusterID == "" {
-		return fmt.Errorf("workload needs --claim, --cluster-id, and --device")
+	if *name == "" || *clusterID == "" || (*dev == "") == (*actuator == "") || (*actuator != "" && *machine == "") {
+		return fmt.Errorf("workload needs --claim, --cluster-id, and either --device or --actuator with --machine")
 	}
 	c, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme.New()})
 	if err != nil {
@@ -79,7 +85,7 @@ func runWorkload(ctx context.Context, args []string) error {
 	}
 	w := &workload{
 		client: c, key: client.ObjectKey{Namespace: *ns, Name: *name},
-		clusterID: *clusterID, device: *dev, refresh: *refresh, every: *every,
+		clusterID: *clusterID, device: *dev, actuator: *actuator, machine: *machine, refresh: *refresh, every: *every,
 	}
 	return w.run(ctx)
 }

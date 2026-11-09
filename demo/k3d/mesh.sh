@@ -5,6 +5,7 @@
 #   mesh.sh down                remove them (delete the clusters first)
 #   mesh.sh url dynamodb|etcd   print the storage URL that the clusters use
 #   mesh.sh endpoint            print the dynamodb-local endpoint
+#   mesh.sh actuator            print the URL of the demo actuator, spec 17
 # The URLs hold IP addresses, because pods cannot resolve Docker container
 # names.
 set -euo pipefail
@@ -14,9 +15,16 @@ ddb=solas-ddb
 ddb_image=amazon/dynamodb-local:3.3.1
 etcd=solas-etcd
 etcd_image=quay.io/coreos/etcd:v3.6.14
+# The demo actuator: a fake provisioning service that checks nothing. The
+# gatekeeper in each cluster sits in front of it, spec 17.
+actuator=solas-actuator
 
 ip() {
   docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$1"
+}
+
+actuator_url() {
+  echo "http://$(ip "$actuator"):9100"
 }
 
 endpoint() {
@@ -46,21 +54,27 @@ up)
       --name solas-etcd --data-dir /tmp/etcd \
       --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls "http://$etcd:2379" >/dev/null
   fi
+  if ! docker inspect "$actuator" >/dev/null 2>&1; then
+    docker run -d --quiet --name "$actuator" --network "$network" solas-demo:dev actuator >/dev/null
+  fi
   endpoint
   ;;
 down)
   docker unpause "$ddb" "$etcd" >/dev/null 2>&1 || true
-  docker rm -f "$ddb" "$etcd" >/dev/null 2>&1 || true
+  docker rm -f "$ddb" "$etcd" "$actuator" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   ;;
 url)
   url "${2:-}"
   ;;
+actuator)
+  actuator_url
+  ;;
 endpoint)
   endpoint
   ;;
 *)
-  echo "usage: mesh.sh up|down|url dynamodb|etcd|endpoint" >&2
+  echo "usage: mesh.sh up|down|url dynamodb|etcd|endpoint|actuator" >&2
   exit 2
   ;;
 esac

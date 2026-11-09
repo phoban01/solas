@@ -120,6 +120,26 @@ can see:
 | 2026-11-09 | 5ce2cfe | etcd, fsync on | 2 | 16 | 3946.1 | 29.8 | 0.5 | 4.8 | 0.7 | 5.0 | 102.2 | 0.1 | 2.0 | - | 0 |
 | 2026-11-09 | 5ce2cfe | etcd, fsync on | 8 | 64 | 3335.6 | 32.8 | 2.6 | 17.7 | 3.4 | 19.3 | 106.9 | 0.9 | 8.9 | - | 0 |
 | 2026-11-09 | 5ce2cfe | etcd, fsync on | 32 | 256 | 1353.6 | 37.6 | 19.0 | 51.7 | 44.8 | 310.1 | 107.1 | 27.5 | 326.8 | - | 0 |
+
+## Gatekeeper
+
+Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec
+17. It sends 2000 deploy calls to a fake actuator directly and 2000
+through the gatekeeper, with a fake store that answers at once, so the
+row shows what the proxy, the header checks, the lookup, the device read,
+and the lock add. In a cluster the consistent read of the device adds
+one store round trip on top: the bind p50 of the scale rows is the
+closest measure of it.
+
+| Date | Commit | Path | p50 | p99 |
+|------|--------|------|----:|----:|
+| 2026-11-09 | 9cf5083 | direct to the actuator | 11 µs | 114 µs |
+| 2026-11-09 | 9cf5083 | through the gatekeeper, in process | 40 µs | 1.14 ms |
+| 2026-11-09 | 9cf5083 | the gatekeeper adds | 28 µs | 1.02 ms |
+
+The e2e reclaim scene shows the gatekeeper at work in a cluster: the
+stale holder's deploy after a reclaim is rejected with 403 and never
+reaches the actuator (`test/e2e/mesh_test.go`).
 ## Soak
 
 Method: `devbox run soak`, the test `TestSoak` in
@@ -137,6 +157,11 @@ go down, and every rejected use had a token below the highest accepted.
 | Date | Commit | Store | Duration | Faults | Takeovers | History | Violations | Gatekeeper |
 |------|--------|-------|---------:|--------|----------:|---------|-----------:|------------|
 | 2026-11-09 | 35359f4 | dynamodb-local | 30 min, seed 1 | 13 store pauses of 15 to 35 s, 26 node pauses of 12 to 30 s, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 87 Lost claims created again | 226 events, 108 binds, 102 releases | 0 | 1471 uses accepted, 81 rejected, every rejection for a token below the highest accepted; highest token 19 |
+| 2026-11-09 | 58342bc | dynamodb-local, through the gatekeeper | 30 min, seed 1 | 13 store pauses, 26 node pauses, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 86 Lost claims created again | 224 events, 107 binds, 101 releases | 0 | 1309 uses accepted, 81 rejected, every rejection for a stale token; 1093 actuator calls accepted through `solas gatekeeper`, each from the holder of the token at the time |
+
+The second row runs the H100 behind `solas gatekeeper` and the demo
+actuator, spec 17. The verifier checks each call the actuator accepted
+against the holder of the token in the replayed history.
 
 The replay covered the whole run: the event retention of the DynamoDB
 store is one hour, and the run took 31 minutes. The 81 rejections are

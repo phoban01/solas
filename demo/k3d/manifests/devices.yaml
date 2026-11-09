@@ -28,8 +28,9 @@ metadata:
   name: gpu-h100-1
   labels: {kind: gpu, zone: eu-west-1a}
 spec:
-  description: the only H100; a gatekeeper checks its fencing tokens
-  attributes: {vendor: nvidia, model: H100, memoryGiB: "80"}
+  description: the only H100; a gatekeeper checks its fencing tokens, and
+    machineID names it at the actuator behind solas gatekeeper
+  attributes: {vendor: nvidia, model: H100, memoryGiB: "80", machineID: h100-01}
 ---
 apiVersion: solas.dev/v1alpha1
 kind: Device

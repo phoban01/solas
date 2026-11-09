@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/phoban01/solas/pkg/apis/claims/v1alpha1"
+	solasv1alpha1 "github.com/phoban01/solas/pkg/apis/solas/v1alpha1"
 	"github.com/phoban01/solas/pkg/audit"
 	"github.com/phoban01/solas/pkg/migrate"
 )
@@ -320,6 +321,40 @@ func (s *soak) verify(ctx context.Context) {
 		}
 	}
 
+	//= spec/solas.md#17-2-check
+	//= type=test
+	//# It MUST forward the request only when the `claimRef` of the device names
+	//# the member, namespace, and name of the header, and the `fencingToken`
+	//# of the device equals the token of the header.
+	//
+	// The actuator behind the gatekeeper accepted every call that reached
+	// it. Each one must come from the claim that held the device with that
+	// token in the replayed history, and the tokens of a machine must never
+	// go down.
+	actuatorURL := strings.TrimSpace(run(t, "", root+"/demo/k3d/mesh.sh", "actuator"))
+	machines := s.machines(ctx)
+	calls := actuatorLog(actuatorURL)
+	highestOf := map[string]int64{}
+	for _, c := range calls {
+		device, ok := machines[c.Machine]
+		if !ok {
+			t.Errorf("actuator: a call for machine %s, which no device names", c.Machine)
+			continue
+		}
+		token, err := strconv.ParseInt(c.Token, 10, 64)
+		if err != nil {
+			t.Errorf("actuator: a call with token %q reached it", c.Token)
+			continue
+		}
+		if holder, ok := replay.Holder(device, token); !ok || holder != c.Claim {
+			t.Errorf("actuator: %s %s with token %d by %s, but the history gives that token to %q", c.Operation, c.Machine, token, c.Claim, holder)
+		}
+		if token < highestOf[c.Machine] {
+			t.Errorf("actuator: %s %s with token %d after token %d", c.Operation, c.Machine, token, highestOf[c.Machine])
+		}
+		highestOf[c.Machine] = max(highestOf[c.Machine], token)
+	}
+
 	kinds := make([]string, 0, len(s.faults))
 	for k := range s.faults {
 		kinds = append(kinds, k)
@@ -334,6 +369,23 @@ func (s *soak) verify(ctx context.Context) {
 	t.Logf("  takeovers: %d member UID changes, %d Lost claims deleted and created again", s.uidChanges, s.lostDeleted)
 	t.Logf("  history: %d events, %d binds, %d releases, %d binds against an offer, %d recoveries, %d deletes, %d violations",
 		replay.Events, replay.Binds, replay.Releases, replay.OfferBinds, replay.Recoveries, replay.Deletes, len(replay.Violations))
+	t.Logf("  actuator: %d calls accepted through the gatekeeper, each from the holder of the token at the time", len(calls))
 	t.Logf("  gatekeeper: %d uses accepted, %d rejected, all %d rejections for a token below the highest accepted (%d)",
 		accepted, rejected, lateRejects, highest)
+}
+
+// machines maps each machine ID at the actuator to the device that names
+// it in its machineID attribute.
+func (s *soak) machines(ctx context.Context) map[string]string {
+	var list solasv1alpha1.DeviceList
+	if err := s.clients["a"].List(ctx, &list); err != nil {
+		s.t.Fatalf("list devices: %v", err)
+	}
+	out := map[string]string{}
+	for _, d := range list.Items {
+		if id, ok := d.Spec.Attributes["machineID"]; ok {
+			out[id] = d.Name
+		}
+	}
+	return out
 }
