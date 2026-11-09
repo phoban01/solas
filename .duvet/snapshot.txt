@@ -180,6 +180,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: set `status.fencingToken` to the old value plus 1.
     TEXT[!MUST,implementation,test]: The server MUST ignore the `status.fencingToken` that a client sends.
     TEXT[!MUST,implementation]: In every other status update, the server MUST keep the old token.
+    TEXT[test]: The token of a device never goes down, so a later bind always has a
+    TEXT[test]: higher token.
     TEXT[!MUST,implementation,test]: The server MUST reject a status update that sets a `claimRef` with an
     TEXT[!MUST,implementation,test]: empty field.
     TEXT[!MUST,implementation,test]: A spec update MUST NOT change `status`.
