@@ -48,6 +48,12 @@ pool=$(mktemp)
 for i in $(seq 1 "$claims"); do
   printf -- '---\napiVersion: solas.dev/v1alpha1\nkind: Device\nmetadata:\n  name: burst-%03d\nspec:\n  attributes: {burst: "true"}\n' "$i"
 done >"$pool"
+# The server reports ready before it has read the store, spec 16.1, and
+# a new table takes a while to exist; writes get 503 until then. Retry.
+for _ in $(seq 90); do
+  kubectl apply -f "$pool" >/dev/null 2>&1 && break
+  sleep 1
+done
 kubectl apply -f "$pool" >/dev/null
 for _ in $(seq 60); do
   [ "$(kubectl get devices -o name 2>/dev/null | grep -c burst-)" -ge "$claims" ] && break
