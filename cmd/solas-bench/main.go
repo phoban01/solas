@@ -40,6 +40,7 @@ import (
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/apiserver"
 	"github.com/phoban01/solas/pkg/registry/solas/device"
+	memberregistry "github.com/phoban01/solas/pkg/registry/solas/member"
 	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
 )
@@ -53,6 +54,8 @@ type options struct {
 	devices    int
 	duration   time.Duration
 	header     bool
+	// memberLease, when set, gives each simulated member a Member object.
+	memberLease time.Duration
 }
 
 func main() {
@@ -65,6 +68,7 @@ func main() {
 	fs.IntVar(&o.devices, "devices", 0, "devices in the pool; 0 means members * claims")
 	fs.DurationVar(&o.duration, "duration", 10*time.Second, "how long the claims run")
 	fs.BoolVar(&o.header, "header", true, "print the header row")
+	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")
 	_ = fs.Parse(os.Args[1:])
 	if o.storageURL == "" {
 		fmt.Fprintln(os.Stderr, "solas-bench: --storage-url is required")
@@ -143,17 +147,94 @@ type member struct {
 	rest    *device.REST
 	status  *device.StatusREST
 	destroy func()
+	// members and memberStatus are set when the member has a Member.
+	members      *memberregistry.REST
+	memberStatus *memberregistry.StatusREST
+	lease        time.Duration
+	memberRV     string
 }
 
-func newMember(g apiserver.RESTOptionsGetter, i int) (*member, error) {
+func newMember(g apiserver.RESTOptionsGetter, i int, lease time.Duration) (*member, error) {
 	r, s, err := device.NewREST(apiserver.Scheme, g)
 	if err != nil {
 		return nil, err
 	}
-	return &member{
-		name: fmt.Sprintf("m%02d", i), uid: types.UID(fmt.Sprintf("member-uid-%02d", i)),
-		rest: r, status: s, destroy: r.Store.DestroyFunc,
-	}, nil
+	m := &member{
+		name: fmt.Sprintf("bench-m%02d", i), uid: types.UID(fmt.Sprintf("bench-member-uid-%02d", i)),
+		rest: r, status: s, destroy: r.Store.DestroyFunc, lease: lease,
+	}
+	if lease > 0 {
+		mr, ms, err := memberregistry.NewREST(apiserver.Scheme, g)
+		if err != nil {
+			r.Store.DestroyFunc()
+			return nil, err
+		}
+		m.members, m.memberStatus = mr, ms
+		m.destroy = func() {
+			r.Store.DestroyFunc()
+			mr.Store.DestroyFunc()
+		}
+	}
+	return m, nil
+}
+
+// join creates the Member of a simulated member, as a member cluster
+// does before it binds, spec 7.2, so the sweepers of real clusters on
+// the same store treat its devices as held. It takes the real UID.
+func (m *member) join(ctx context.Context) error {
+	if m.lease == 0 {
+		return nil
+	}
+	now := metav1.NewMicroTime(time.Now())
+	obj, err := m.members.Create(reqCtx(ctx), &solas.Member{
+		ObjectMeta: metav1.ObjectMeta{Name: m.name},
+		Spec:       solas.MemberSpec{LeaseDurationSeconds: int32(m.lease / time.Second)},
+		Status:     solas.MemberStatus{Phase: solas.MemberActive, RenewTime: &now},
+	}, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("join %s: %w", m.name, err)
+	}
+	mem := obj.(*solas.Member)
+	m.uid, m.memberRV = mem.UID, mem.ResourceVersion
+	return nil
+}
+
+// renew renews the Member every lease / 3 until stop closes, spec 7.3.
+func (m *member) renew(ctx context.Context, stop <-chan struct{}, st *stats) {
+	if m.lease == 0 {
+		return
+	}
+	t := time.NewTicker(m.lease / 3)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+		}
+		obj, err := m.members.Get(reqCtx(ctx), m.name, &metav1.GetOptions{})
+		if err != nil {
+			st.fail(ctx, fmt.Errorf("renew %s: %w", m.name, err))
+			continue
+		}
+		mem := obj.(*solas.Member).DeepCopy()
+		now := metav1.NewMicroTime(time.Now())
+		mem.Status.RenewTime = &now
+		if _, _, err := m.memberStatus.Update(reqCtx(ctx), m.name, rest.DefaultUpdatedObjectInfo(mem),
+			rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{}); err != nil {
+			st.fail(ctx, fmt.Errorf("renew %s: %w", m.name, err))
+		}
+	}
+}
+
+// leave deletes the Member at the end of the run.
+func (m *member) leave(ctx context.Context) {
+	if m.lease == 0 {
+		return
+	}
+	if _, _, err := m.members.Delete(reqCtx(ctx), m.name, rest.ValidateAllObjectFunc, &metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		fmt.Fprintf(os.Stderr, "solas-bench: leave %s: %v\n", m.name, err)
+	}
 }
 
 // list returns the devices from a consistent list, as the controller
@@ -255,7 +336,7 @@ func run(ctx context.Context, o options) error {
 	}()
 	// The first member prepares the pool. The others start once the pool
 	// exists, so their first list measures a sync of the whole pool.
-	admin, err := newMember(g, 0)
+	admin, err := newMember(g, 0, o.memberLease)
 	if err != nil {
 		return err
 	}
@@ -273,7 +354,7 @@ func run(ctx context.Context, o options) error {
 	var st stats
 	for i := 1; i < o.members; i++ {
 		from := time.Now()
-		m, err := newMember(g, i)
+		m, err := newMember(g, i, o.memberLease)
 		if err != nil {
 			return err
 		}
@@ -286,6 +367,18 @@ func run(ctx context.Context, o options) error {
 	if _, _, err := waitList(ctx, admin, o.devices); err != nil {
 		return err
 	}
+	// With a lease, each member joins as a Member before it binds, spec
+	// 7.2, and leaves at the end.
+	for _, m := range members {
+		if err := m.join(ctx); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		for _, m := range members {
+			m.leave(context.Background())
+		}
+	}()
 
 	// The workers stop between two requests when stop closes, so no
 	// request is cut off in flight at the end of the run. The timer
@@ -303,6 +396,11 @@ func run(ctx context.Context, o options) error {
 	var wg sync.WaitGroup
 	begin := make(chan struct{})
 	for _, m := range members {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.renew(ctx, stop, &st)
+		}()
 		_, rv, err := m.list(ctx)
 		if err != nil {
 			return err
@@ -404,6 +502,10 @@ func reset(ctx context.Context, m *member, want int) error {
 	}
 	for i := range devices {
 		d := &devices[i]
+		// Only the bench's own devices: a shared store has others.
+		if d.Spec.Attributes["bench"] != "true" {
+			continue
+		}
 		if d.Status.ClaimRef != nil {
 			if _, err := m.writeRef(ctx, d, nil); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("release %s: %w", d.Name, err)
@@ -415,6 +517,7 @@ func reset(ctx context.Context, m *member, want int) error {
 	}
 	for i := range want {
 		d := &solas.Device{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("bench-%04d", i), Labels: map[string]string{"bench": "true"}}}
+		d.Spec.Attributes = map[string]string{"bench": "true"}
 		if _, err := m.rest.Create(reqCtx(ctx), d, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create %s: %w", d.Name, err)
 		}
@@ -479,7 +582,7 @@ func claimLoop(ctx context.Context, stop <-chan struct{}, m *member, claim int, 
 		st.listed(time.Since(from))
 		var free []*solas.Device
 		for i := range devices {
-			if devices[i].Status.ClaimRef == nil {
+			if devices[i].Status.ClaimRef == nil && devices[i].Spec.Attributes["bench"] == "true" {
 				free = append(free, &devices[i])
 			}
 		}
