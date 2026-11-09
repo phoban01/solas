@@ -110,3 +110,13 @@ func execCommand(name string, args ...string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
+
+// execCommandStdin runs a command with stdin and the repository as the
+// working directory, and returns its combined output.
+func execCommandStdin(stdin, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = root
+	cmd.Stdin = stringsReader(stdin)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}

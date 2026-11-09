@@ -34,6 +34,7 @@
       "scale": "scripts/scale.sh",
       "sim-gate": "scripts/sim-gate.sh",
       "e2e": "scripts/e2e.sh",
+      "soak": "scripts/soak.sh",
       "smoke": "scripts/smoke.sh",
       "mbt": "scripts/mbt.sh",
       "pivot-smoke": "scripts/pivot-smoke.sh",

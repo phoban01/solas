@@ -15,9 +15,6 @@ The result should be a fully working demo (it is fine to use localstack if possi
 LocalStack now needs an auth token, so the project uses amazon/dynamodb-local
 (docs/adr/0007-dynamodb-local.md).
 
-
-
-
 ## How work happens
 
 1. **Spec first.** 
@@ -41,7 +38,6 @@ LocalStack now needs an auth token, so the project uses amazon/dynamodb-local
 Use devbox for everything. Do not install tools globally or call `nix-shell`
 by hand. `devbox.json` lists the packages and the scripts above.
 `devbox run duvet-install` installs Duvet through cargo on first use.
-
 
 ## Local resources
 
@@ -131,6 +127,7 @@ filler, no marketing adjectives, no emoji.
 - `cmd/solas/` the one binary: the extension server and the controller;
   `demo/k3d/` two-cluster demo
 - `docs/confidence.md` the trust ladder; `docs/sim-gate.md` the simulator;
+  `docs/benchmarks.md` every measured number;
   `docs/scale.md` the scale results;
   `docs/mbt.md` the model-based tests
 - `.github/workflows/verify.yml` and `sim-gate.yml` the CI gates
