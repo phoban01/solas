@@ -204,11 +204,13 @@ the round trip.
 | 2026-11-09 | 31883ff | us-east-1, 140 ms | 2 | 16 | 3.5 | 48.1 | 840.5 | 3759.4 | 218.6 | 341.7 | 400.7 | 197.3 | 293.8 | 45.4 | 0 |
 | 2026-11-09 | 31883ff | us-east-1, 140 ms | 8 | 64 | 4.1 | 51.9 | 2454.4 | 13148.1 | 243.6 | 366.3 | 501.6 | 193.8 | 305.2 | 35.2 | 0 |
 | 2026-11-09 | 31883ff | us-east-1, 140 ms | 32 | 256 | 3.2 | 43.4 | 16528.8 | 56122.9 | 422.4 | 1995.5 | 809.1 | 278.6 | 2528.1 | 14.9 | 16 |
-AP_ROWS
+| 2026-11-09 | 31883ff | ap-southeast-1, 280 ms | 2 | 16 | 1.0 | 40.0 | 4234.2 | 8590.6 | 441.0 | 838.2 | 1139.6 | 403.9 | 583.3 | 7.0 | 0 |
+| 2026-11-09 | 31883ff | ap-southeast-1, 280 ms | 8 | 64 | 2.9 | 45.2 | 5089.3 | 13791.4 | 702.2 | 1054.6 | 1387.5 | 526.5 | 1047.1 | 6.7 | 0 |
+| 2026-11-09 | 31883ff | ap-southeast-1, 280 ms | 32 | 256 | 3.7 | 41.3 | 12394.9 | 43271.2 | 813.7 | 911.6 | 1892.2 | 507.2 | 1032.1 | 5.5 | 0 |
 
 **The ceiling scales with the round trip, so it is the write loop, not
 the table.** Three times the round trip gave a third of the binds per
-second: 12 to 15 at 50 ms, 3.5 at 140 ms. A server-side limit on the
+second: 12 to 15 at 50 ms, 3.5 at 140 ms, 1 to 4 at 280 ms. A server-side limit on the
 counter item would not move with the client's distance. What moves is
 the write loop of spec 2.3 before commit 92085cf: every writer reads
 the counter, sends its transaction, and when two writers raced, DynamoDB
@@ -218,6 +220,27 @@ costs a round trip, 60 ms at 50 ms and 220 ms at 140 ms, because the
 cache reads the counter once. The watch lag follows the poll plus a
 round trip. The batched writes of 92085cf let the writers of one server
 share the round trip; the rows after it are below.
+
+### Poll interval
+
+`SCALE_POLL` sets how often the watch of the DynamoDB store polls the
+event log, spec 4.2. Eight members, 8 claims each, 60 seconds per run,
+eu-west-1 at 20 to 40 ms. These runs are also the first with the batched
+writes of commit 92085cf: the 8 member row of the default series above
+had 11.1 binds per second before it.
+
+| Date | Commit | Region, connect | Poll | Members | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-----------------|-----:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | 92085cf | eu-west-1, 41 ms | 100 ms | 8 | 27.3 | 45.2 | 407.7 | 2255.9 | 60.8 | 119.5 | 64.9 | 139.7 | 49.0 | 0 |
+| 2026-11-09 | 92085cf | eu-west-1, 20 ms | 200 ms | 8 | 26.5 | 45.6 | 418.8 | 2203.7 | 66.2 | 128.1 | 93.4 | 232.6 | 39.7 | 0 |
+| 2026-11-09 | 92085cf | eu-west-1, 21 ms | 500 ms | 8 | 20.0 | 39.3 | 316.1 | 1839.9 | 69.8 | 143.1 | 153.6 | 540.7 | 23.2 | 0 |
+
+The lag at p50 is about the round trip plus half the poll interval, and
+the p99 about the round trip plus the interval. The reads per member fall
+from 49 to 23 per second between 100 and 500 ms, most of them the polls
+of the Device and Member resources. For a lease of 30 seconds and a
+renew every 10, a lag of a tenth of a second does not matter; ADR 0004
+keeps polling at 200 ms and records the rows as the reason.
 ## Gatekeeper
 
 Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec
