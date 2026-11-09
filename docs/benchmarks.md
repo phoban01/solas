@@ -189,6 +189,37 @@ and 2 seconds when eight members sync together. The conflict rate is
 zero, because the claims rarely pick the same device; the bind latency
 is the counter, not the race.
 
+### Three regions, one client
+
+The default series from the VM against a table in each region, 20
+seconds per run, 8 claims per member, before the batched writes of
+commit 92085cf. The TCP connect time to the region's endpoint stands for
+the round trip.
+
+| Date | Commit | Region, connect | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Errors |
+|------|--------|-----------------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|-------:|
+| 2026-11-09 | dfe164e | eu-west-1, 50 ms | 2 | 16 | 12.1 | 48.6 | 209.0 | 1112.9 | 59.9 | 121.6 | 120.2 | 62.1 | 176.6 | 140.6 | 0 |
+| 2026-11-09 | dfe164e | eu-west-1, 50 ms | 8 | 64 | 11.1 | 83.7 | 126.8 | 2765.7 | 47.3 | 204.7 | 124.3 | 76.7 | 237.6 | 75.0 | 83 |
+| 2026-11-09 | dfe164e | eu-west-1, 50 ms | 32 | 256 | 14.5 | 73.2 | 236.3 | 4912.9 | 67.7 | 372.4 | 422.1 | 96.2 | 235.1 | 32.7 | 1477 |
+| 2026-11-09 | 31883ff | us-east-1, 140 ms | 2 | 16 | 3.5 | 48.1 | 840.5 | 3759.4 | 218.6 | 341.7 | 400.7 | 197.3 | 293.8 | 45.4 | 0 |
+| 2026-11-09 | 31883ff | us-east-1, 140 ms | 8 | 64 | 4.1 | 51.9 | 2454.4 | 13148.1 | 243.6 | 366.3 | 501.6 | 193.8 | 305.2 | 35.2 | 0 |
+| 2026-11-09 | 31883ff | us-east-1, 140 ms | 32 | 256 | 3.2 | 43.4 | 16528.8 | 56122.9 | 422.4 | 1995.5 | 809.1 | 278.6 | 2528.1 | 14.9 | 16 |
+AP_ROWS
+
+**The ceiling scales with the round trip, so it is the write loop, not
+the table.** Three times the round trip gave a third of the binds per
+second: 12 to 15 at 50 ms, 3.5 at 140 ms. A server-side limit on the
+counter item would not move with the client's distance. What moves is
+the write loop of spec 2.3 before commit 92085cf: every writer reads
+the counter, sends its transaction, and when two writers raced, DynamoDB
+cancelled all but one, which then read again. One write per two round
+trips got through, whatever the number of writers. A consistent list
+costs a round trip, 60 ms at 50 ms and 220 ms at 140 ms, because the
+cache reads the counter once. The watch lag follows the poll plus a
+round trip. The batched writes of 92085cf let the writers of one server
+share the round trip; the rows after it are below.
+## Gatekeeper
+
 Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec
 17. It sends 2000 deploy calls to a fake actuator directly and 2000
 through the gatekeeper, with a fake store that answers at once, so the
