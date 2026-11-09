@@ -71,3 +71,35 @@ spec:
           resources:
             requests: {cpu: 10m, memory: 16Mi}
             limits: {memory: 64Mi}
+---
+# A second workload of the same claim deploys the machine of the H100
+# through the gatekeeper, spec 17. The gatekeeper rejects a stale token
+# before it reaches the actuator.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployer
+  namespace: work
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: deployer}
+  template:
+    metadata:
+      labels: {app: deployer}
+    spec:
+      serviceAccountName: workload
+      containers:
+        - name: deployer
+          image: solas-demo:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - workload
+            - --namespace=work
+            - --claim=job
+            - --cluster-id=CLUSTER_ID
+            - --actuator=http://solas-gatekeeper.solas-system.svc:9443
+            - --machine=h100-01
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}

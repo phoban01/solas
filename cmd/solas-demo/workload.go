@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,7 +19,12 @@ type workload struct {
 	client    client.Client
 	key       client.ObjectKey
 	clusterID string
-	device    string
+	// device is the URL of the demo device, which checks tokens itself.
+	// actuator and machine point instead at a gatekeeper in front of an
+	// actuator, and the machine the claim's device stands for, spec 17.
+	device   string
+	actuator string
+	machine  string
 	// refresh is how often the workload reads its claim. It uses the device
 	// more often than that, so it can act on a view that is out of date,
 	// as a paused process would.
@@ -67,6 +73,10 @@ func (w *workload) run(ctx context.Context) error {
 }
 
 func (w *workload) use(ctx context.Context, token int64) {
+	if w.actuator != "" {
+		w.deploy(ctx, token)
+		return
+	}
 	body, _ := json.Marshal(useRequest{Claim: w.clusterID + "/" + w.key.String(), Token: token})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.device+"/use", bytes.NewReader(body))
 	if err != nil {
@@ -86,4 +96,37 @@ func (w *workload) use(ctx context.Context, token int64) {
 	} else {
 		fmt.Printf("use with token %d: REJECTED, the device has seen token %d\n", token, rec.Highest)
 	}
+}
+
+//= spec/solas.md#17-1-request
+//# A request that changes a device MUST carry the claim of its workload in
+//# the header `Solas-Claim`, as `member/namespace/name`.
+//= spec/solas.md#17-1-request
+//# It MUST carry the fencing token of the claim in the header
+//# `Solas-Fencing-Token`.
+
+// deploy asks the actuator, through the gatekeeper, to deploy the
+// machine of the claim's device, with the claim and its token in the
+// headers. The gatekeeper rejects a stale token with 403.
+func (w *workload) deploy(ctx context.Context, token int64) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.actuator+"/machines/"+w.machine+"/deploy", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		fmt.Printf("deploy: %v\n", err)
+		return
+	}
+	req.Header.Set("Solas-Claim", w.clusterID+"/"+w.key.Namespace+"/"+w.key.Name)
+	req.Header.Set("Solas-Fencing-Token", fmt.Sprint(token))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("deploy %s with token %d: %v\n", w.machine, token, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		fmt.Printf("deploy %s with token %d: accepted\n", w.machine, token)
+		return
+	}
+	reason := make([]byte, 256)
+	n, _ := resp.Body.Read(reason)
+	fmt.Printf("deploy %s with token %d: REJECTED %d, %s\n", w.machine, token, resp.StatusCode, strings.TrimSpace(string(reason[:n])))
 }

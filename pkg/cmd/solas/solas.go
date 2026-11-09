@@ -48,7 +48,7 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	cmd.Use = "solas"
 	cmd.Short = "Serve the solas.dev API from DynamoDB and run the member controller"
 	o.Controller.AddFlags(cmd.Flags())
-	cmd.AddCommand(newMigrateCommand(), newUnsealCommand(), newFinalizeCommand(), newReleaseCommand(), newRestoreEpochCommand())
+	cmd.AddCommand(newMigrateCommand(), newUnsealCommand(), newFinalizeCommand(), newReleaseCommand(), newRestoreEpochCommand(), newGatekeeperCommand())
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
 		if err := errors.Join(o.Server.Validate(), o.Controller.Validate()); err != nil {
 			return err

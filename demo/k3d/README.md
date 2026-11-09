@@ -42,7 +42,7 @@ every 3 seconds, so each scene takes seconds, not minutes.
 | 3 | `b/net` names `nic-1`, which `a/net` holds. `a/net` gets the annotation `solas.dev/transfer-to` and becomes `Transferring`. Its controller offers `nic-1` to `b/net`, and `-o wide` shows the offer. `b/net` binds against the offer with token 2. A watch shows that `nic-1` is never free, and it has no release record. `a/net` goes back to `Pending`. | 14 |
 | 4 | `urgent` in `b` has priority 5 and wants an A100. Both are taken, so it asks for the one that `a/train` holds at priority 1. `train` becomes `Preempting`, keeps the device for its 10 second grace period, then lets it go and goes back to `Pending`. `urgent` binds with token 2. | 10.5 to 10.7 |
 | 5 | Claims `job` in `a` and in `b` race for `gpu-h100-1`. One wins with token 1. The other stays `Pending`. | 5.3, 6.3 |
-| 6 | The winner's node is paused for longer than its lease. The other cluster's sweeper deletes the winner's `Member` and frees its devices. The other `job` binds the H100 with token 2. When the winner wakes up, its workload still believes it holds the device and uses token 1. The device rejects it. | 6.6, 8 |
+| 6 | The winner's node is paused for longer than its lease. The other cluster's sweeper deletes the winner's `Member` and frees its devices. The other `job` binds the H100 with token 2. When the winner wakes up, its workloads still believe they hold the device and use token 1. The demo device rejects it, and `solas gatekeeper` rejects the deploy of the H100's machine before it reaches the actuator. | 6.6, 8, 17 |
 | 7 | The winner's controller finds its `Member` gone. It joins again with a new UID, and its old claims become `Lost`. | 6.5, 7.2 |
 | 8 | The mesh moves to the other store with one setting. `solas migrate` seals dynamodb-local, copies every `Device` and `Member` to etcd, and verifies the copy. A write to the sealed store fails. Then each cluster gets the new `url` in the Secret `solas-storage`, and solas restarts. Every holder and fencing token is the same, and a new claim binds on etcd. [docs/migrate.md](../../docs/migrate.md) has the steps for a real mesh. | 12 |
 
@@ -66,7 +66,8 @@ higher token first, so it rejects the lower one.
   `nic-1` in a transfer.
 - `manifests/claim.yaml`: the `job` claim for the H100, and a workload
   that uses the device with the claim's token.
-- `cmd/solas-demo`: the device gatekeeper (`device`) and the workload
+- `cmd/solas-demo`: the device gatekeeper (`device`), the actuator that
+  checks nothing (`actuator`), and the workload
   (`workload`). They are not part of solas.
 - `mesh.sh up|down|url dynamodb|etcd`: the Docker network `solas-mesh`,
   the table container `solas-ddb`, and the etcd container `solas-etcd`.

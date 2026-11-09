@@ -35,3 +35,10 @@ for _ in $(seq 60); do
   sleep 1
 done
 say "joined as member $name, uid $(kubectl get member "$name" -o jsonpath='{.metadata.uid}')"
+
+say "install the gatekeeper in front of the demo actuator"
+# One gatekeeper per actuator, spec 17. It reads devices through this
+# cluster's solas API and forwards a change only to the holder with the
+# current token.
+sed "s|ACTUATOR_URL|$(demo/k3d/mesh.sh actuator)|" deploy/gatekeeper/gatekeeper.yaml | kubectl apply -f - >/dev/null
+kubectl -n solas-system rollout status deploy/solas-gatekeeper --timeout=120s >/dev/null

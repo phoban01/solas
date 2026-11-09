@@ -63,3 +63,21 @@ func TestReplayFindsViolations(t *testing.T) {
 		t.Errorf("violations = %v, want one token-raise, one token-keep, one holder-change", r.Violations)
 	}
 }
+
+// TestHolderOfEachToken: the replay remembers which claim got each token.
+func TestHolderOfEachToken(t *testing.T) {
+	a, b := ref("a", "c1", "1"), ref("b", "c2", "1")
+	r := New()
+	r.Apply(watch.Added, state("2", 0, nil, nil))
+	r.Apply(watch.Modified, state("3", 1, a, nil))
+	r.Apply(watch.Modified, state("4", 1, nil, nil))
+	r.Apply(watch.Modified, state("5", 2, b, nil))
+	for token, want := range map[int64]string{1: "a/ns/c1", 2: "b/ns/c2"} {
+		if got, ok := r.Holder("d1", token); !ok || got != want {
+			t.Errorf("Holder(d1, %d) = %q, %v; want %q", token, got, ok, want)
+		}
+	}
+	if _, ok := r.Holder("d1", 3); ok {
+		t.Error("Holder(d1, 3) found a holder for a token that no bind gave")
+	}
+}

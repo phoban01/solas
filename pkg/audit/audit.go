@@ -41,15 +41,19 @@ type Summary struct {
 	Violations []Violation
 }
 
-// Replay holds the last state of each device and the summary so far.
+// Replay holds the last state of each device, the holder of each token
+// of each device, and the summary so far.
 type Replay struct {
 	Summary
 	last map[string]*solas.Device
+	// holders maps a device and a token to the claim that got the token,
+	// as member/namespace/name.
+	holders map[string]map[int64]string
 }
 
 // New returns an empty replay.
 func New() *Replay {
-	return &Replay{last: map[string]*solas.Device{}}
+	return &Replay{last: map[string]*solas.Device{}, holders: map[string]map[int64]string{}}
 }
 
 // Apply feeds the next event of a device, in resource version order.
@@ -78,6 +82,12 @@ func (r *Replay) check(old, d *solas.Device) {
 		r.Violations = append(r.Violations, Violation{Device: d.Name, RV: d.ResourceVersion, Rule: rule, Detail: fmt.Sprintf(format, args...)})
 	}
 	raise := func(what string) {
+		if n != nil {
+			if r.holders[d.Name] == nil {
+				r.holders[d.Name] = map[int64]string{}
+			}
+			r.holders[d.Name][nt] = n.Member + "/" + n.Namespace + "/" + n.Name
+		}
 		//= spec/solas.md#5-3-status-updates
 		//= type=test
 		//# The token of a device never goes down, so a later bind always has a
@@ -179,4 +189,14 @@ func (r *Replay) ReadStore(ctx context.Context, s storage.Interface, prefix stri
 			timer.Reset(idle)
 		}
 	}
+}
+
+// Holder returns the claim, as member/namespace/name, that got token of
+// device in the replayed history, or false when no bind gave that token.
+// An actuator log is checked against it: every call the actuator
+// accepted must come from the claim that held the device with that
+// token.
+func (r *Replay) Holder(device string, token int64) (string, bool) {
+	h, ok := r.holders[device][token]
+	return h, ok
 }

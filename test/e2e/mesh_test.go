@@ -306,6 +306,10 @@ func TestMesh(t *testing.T) {
 			return ctx
 		}).
 		Assess("the device rejects the stale holder after a reclaim", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+			actuatorURL := strings.TrimSpace(run(t, "", root+"/demo/k3d/mesh.sh", "actuator"))
+			eventually(t, 60*time.Second, "the winner deploys through the gatekeeper", func(context.Context) bool {
+				return deployed(actuatorURL, winner, 1)
+			})
 			oldUID = memberUID(ctx, clients[winner], winner)
 			node := "k3d-e2e-" + winner + "-server-0"
 			run(t, "", "docker", "pause", node)
@@ -316,10 +320,28 @@ func TestMesh(t *testing.T) {
 			eventually(t, 30*time.Second, "the new holder uses the device", func(context.Context) bool {
 				return seen(deviceURL, loser, 2, true)
 			})
+			eventually(t, 60*time.Second, "the new holder deploys through the gatekeeper", func(context.Context) bool {
+				return deployed(actuatorURL, loser, 2)
+			})
+			handover := time.Now()
 			run(t, "", "docker", "unpause", node)
 			eventually(t, 60*time.Second, "the device rejects token 1", func(context.Context) bool {
 				return seen(deviceURL, winner, 1, false)
 			})
+			//= spec/solas.md#17-2-check
+			//= type=test
+			//# It MUST reject every other request that changes a device with
+			//# `403 Forbidden`, and say why.
+			//
+			// The winner's deployer wakes with token 1 and deploys again. The
+			// gatekeeper rejects it, so the actuator never sees it.
+			eventually(t, 60*time.Second, "the gatekeeper rejects the stale deploy", func(context.Context) bool {
+				out, _ := runQuiet("kubectl", "--kubeconfig", kubeconfig(winner), "-n", "work", "logs", "deploy/deployer", "--tail=50")
+				return strings.Contains(out, "REJECTED 403")
+			})
+			if n := deploysAfter(actuatorURL, winner, 1, handover); n != 0 {
+				t.Errorf("the actuator accepted %d deploys with the stale token 1 after the handover", n)
+			}
 			return ctx
 		}).
 		Assess("the old holder joins again and its claims are Lost", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
@@ -408,4 +430,48 @@ spec:
 		}
 		return ctx
 	}
+}
+
+// actuatorCall is one call the demo actuator accepted, with the headers
+// the gatekeeper forwarded.
+type actuatorCall struct {
+	Time      time.Time `json:"time"`
+	Machine   string    `json:"machine"`
+	Operation string    `json:"operation"`
+	Claim     string    `json:"claim"`
+	Token     string    `json:"token"`
+}
+
+// actuatorLog reads the calls the demo actuator accepted.
+func actuatorLog(url string) []actuatorCall {
+	resp, err := http.Get(url + "/log")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var log []actuatorCall
+	_ = json.NewDecoder(resp.Body).Decode(&log)
+	return log
+}
+
+// deployed reports whether the actuator accepted a deploy from the job
+// claim of a cluster with a token.
+func deployed(url, cluster string, token int64) bool {
+	for _, c := range actuatorLog(url) {
+		if c.Claim == cluster+"/work/job" && c.Token == fmt.Sprint(token) && c.Operation == "deploy" {
+			return true
+		}
+	}
+	return false
+}
+
+// deploysAfter counts the deploys from a claim with a token after t.
+func deploysAfter(url, cluster string, token int64, t time.Time) int {
+	n := 0
+	for _, c := range actuatorLog(url) {
+		if c.Claim == cluster+"/work/job" && c.Token == fmt.Sprint(token) && c.Time.After(t) {
+			n++
+		}
+	}
+	return n
 }
