@@ -62,4 +62,14 @@ keeps it, and the holder changes only through a release, an offer, or a
 recovery. The gatekeeper log is checked too: the accepted tokens never
 go down, and every rejected use had a token below the highest accepted.
 
-No run yet.
+| Date | Commit | Store | Duration | Faults | Takeovers | History | Violations | Gatekeeper |
+|------|--------|-------|---------:|--------|----------:|---------|-----------:|------------|
+| 2026-11-09 | 35359f4 | dynamodb-local | 30 min, seed 1 | 13 store pauses of 15 to 35 s, 26 node pauses of 12 to 30 s, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 87 Lost claims created again | 226 events, 108 binds, 102 releases | 0 | 1471 uses accepted, 81 rejected, every rejection for a token below the highest accepted; highest token 19 |
+
+The replay covered the whole run: the event retention of the DynamoDB
+store is one hour, and the run took 31 minutes. The 81 rejections are
+the workloads of clusters whose node was paused for longer than D. Each
+one woke up, still believed it held the H100, and used it with its old
+token after the other cluster had bound the device with a higher one.
+The gatekeeper rejected every such use, spec 6.6. No claim was Suspended
+at the end, and no fault step was skipped.
