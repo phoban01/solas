@@ -17,7 +17,7 @@ protection.
 - [The demo](demo/k3d/README.md): two clusters, a race for a device, a
   reclaim, and fencing. Run it with `devbox run demo`.
 - [The specification](spec/solas.md) and the [ADRs](docs/adr/).
-- [The plan](docs/plan.md).
+- [The plan](docs/plan.md), and the [plan to close the evidence gaps](docs/plan-evidence.md).
 
 ## Choose a store
 

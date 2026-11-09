@@ -1,0 +1,210 @@
+# Plan: close the evidence gaps
+
+A review of solas against another design (2026-11-09) found
+that solas has the stronger safety design and the weaker evidence. This
+plan closes each gap it named, and each step ends with a row in
+[benchmarks.md](benchmarks.md) or a test that CI runs. The rule of the
+plan: no claim without a number or a gate behind it.
+
+The review rested on the briefs, not on the code, and two of its points
+need a correction before the plan:
+
+- The shared store holds five kinds, not two: Device, Member,
+  MemberPolicy, MemberUsage, and StoreFormat. MemberPolicy was added in
+  commit 2547d87 with six lines in `pkg/apiserver/apiserver.go` and no
+  change in `pkg/storage`. The generality is real; it is not written up
+  as evidence. M23 does that.
+- The fencing token is checked by the demo gatekeeper only. That part
+  of the review is right, and M21 is the answer.
+
+## The gaps and the evidence that closes them
+
+| Gap named in the review | Evidence to produce | Milestone |
+|-------------------------|---------------------|-----------|
+| No real DynamoDB run; the local numbers are an emulator's | Scale rows on a DynamoDB table at 2, 8, 32, and 128 members and at 10,000 devices, with the counter ceiling and the partition limit measured | M20 |
+| No latency test | Bind, list, and watch lag against tables in three regions, so the rows cover three RTTs | M20 |
+| Watch is a 200 ms poll | Lag and read cost at poll intervals of 100, 200, and 500 ms on DynamoDB; a decision on DynamoDB Streams with a number behind it | M20 |
+| The etcd rows ran with no fsync | etcd rows with fsync on, next to the old ones | M22 |
+| The gatekeeper is only proposed | ADR 0017 accepted; a `solas gatekeeper` proxy in front of an actuator; an e2e test; a soak that runs through it; the latency it adds, measured | M21 |
+| The soak audited 226 events | A soak with load on the store during the faults, so the replay audits thousands of events; a two-hour soak on DynamoDB | M23 |
+| Generality is a claim | A recipe for a new kind, the diff of the last kind added as proof, and a CI check that the generic core names no kind | M23 |
+| No order across kinds | A written argument, checked by the Quint model, that no invariant of solas needs an order across two resources | M23 |
+| 429 on consistent lists under writes; 1.6 s lists at 10,000 devices | Issues #233 and #237 fixed; the 10,000 device rows measured again | M22 |
+| Claims suspend 2 to 4 times D after a store pause (#236) | The suspend within D plus one reconcile, measured again by `TestStoreOutage`, as a row | M22 |
+| Wide surface, thin evidence | `docs/confidence.md`: every claim of the README and the ADRs, with the test, model, or row that backs it, or the word "open" | M25 |
+| No server-side ownership | ADR 0022 decided and built: a partition per member, IAM and etcd roles per member, and a test that one member's credentials cannot write another member's objects | M24 |
+| An operator cannot see conflicts, lag, or sweeps | The metrics and the audit trail of M19 (#225 to #229) | M24 |
+
+Issues #232 (etcd at start) and the M19 fault injection issues (#217 to
+#220) stay in M19 and run alongside.
+
+## Principles
+
+1. **Spec first, then Quint, then Duvet**, as before. A protocol change
+   starts in `spec/solas.md`.
+2. **A number has a row.** Every measurement goes into `benchmarks.md`
+   with the date, the commit, and the environment. A number in prose
+   points at its row.
+3. **One heavy job at a time** on the VM. Runs against DynamoDB are
+   light on the VM; the store does the work.
+4. **Small issues.** Each issue below names its spec sentence, its
+   files, and the command that proves it is done.
+
+## M20: Evidence on DynamoDB
+
+Needs an AWS account; the cost is in the last section. Everything runs
+from the VM or from one EC2 instance in the table's region.
+
+- **Setup.** `scripts/aws-bench.sh` creates an on-demand table with TTL
+  on `expires`, a billing alarm, and prints the storage URL. It deletes
+  the table at the end. An IAM policy limits the credentials to tables
+  named `solas-bench-*`.
+- **Scale series.** `devbox run scale` against the table at 2, 8, and
+  32 members with the default pool, from the VM. The rows show what a
+  real counter item sustains and where the TransactionConflict retries
+  start.
+- **The counter ceiling.** `solas-bench` with claims that write without
+  a list, so the counter item alone is the limit. The row gives the
+  writes per second of one item, against the 1000 per second that ADR
+  0003 assumed. A DynamoDB partition sustains 1000 write units per
+  second, and a transaction costs two per item, so expect about 500
+  transactions per second per resource.
+- **The partition limit on lists.** All objects of a resource share one
+  partition key, so a list of 10,000 devices reads about 10,000 read
+  units from one partition, whose limit is 3000 per second. The 10,000
+  device run on the table measures this; the fix is M22, and the row
+  after M22 shows the difference.
+- **128 members.** From one EC2 instance in the region, so the bench
+  has the memory and no WAN in the way: 128 members, 8 claims each,
+  default pool and 10,000 devices.
+- **Latency by region.** The same run against tables in eu-west-1,
+  us-east-1, and ap-southeast-1 from the VM. The rows carry the RTT, so
+  the bind and list costs read as multiples of it, as WAN
+  measurements do.
+- **Watch lag against poll interval.** Lag p50 and p99 and reads per
+  member per second at `--poll-interval` 100 ms, 200 ms, and 500 ms.
+  Then a decision in ADR 0004: keep polling, or add DynamoDB Streams
+  behind the same interface, with the measured lag and cost as the
+  reason.
+- **A soak on DynamoDB.** `devbox run soak` with the two k3d clusters
+  on the table for two hours. The replay audits the whole run; the
+  event retention must be set above two hours for it.
+
+## M21: The gatekeeper
+
+ADR 0017 moves from proposed to accepted, with the measured cost.
+
+- **Spec.** A section on the gatekeeper: the headers, the check against
+  the store, the lock per device, and the pass-through of reads, from
+  ADR 0017.
+- **`solas gatekeeper`.** A subcommand that proxies an actuator's HTTP
+  API. It reads the Device from the solas API of its cluster, accepts a
+  request when `claimRef` names the claim of the request and the token
+  matches, holds a lock per device from the check to the answer, and
+  passes reads through.
+- **An actuator to fence.** `solas-demo actuator`: a fake provisioning
+  service with deploy, power, and release calls that records every call
+  it accepts. It checks nothing itself, as a real one would not.
+- **e2e.** The H100 scene runs through the gatekeeper and the actuator:
+  the stale holder's deploy is rejected at the gatekeeper and never
+  reaches the actuator.
+- **Soak.** The soak runs through the gatekeeper and the actuator. The
+  verifier reads the actuator's log and checks that every accepted call
+  came from the holder of the device at that time, by the replayed
+  history.
+- **Cost.** The latency the gatekeeper adds to a call, p50 and p99, with
+  a warm cache and with a cold one, as a row.
+
+## M22: The list path
+
+- **#237.** Serve consistent lists from the watch cache on DynamoDB.
+  The 10,000 device rows run again on dynamodb-local and on the table.
+- **#233.** A consistent list that does not fail under sustained
+  writes, for the lists that still reach the store.
+- **etcd with fsync.** `scripts/local-stores.sh` takes a flag; the
+  scale rows run again with fsync on. Both sets stay on the page, so
+  the reader sees what fsync costs.
+
+## M23: Soak depth and generality
+
+- **Load during the soak.** `solas-bench` runs against the same store
+  during the faults, as more members, so the replay audits thousands of
+  events and the takeovers happen under load. The soak row gains the
+  bench's columns.
+- **Soak on etcd.** `SOLAS_STORE=etcd devbox run soak`, 30 minutes, as a
+  row.
+- **A recipe for a kind.** `docs/adding-a-kind.md`: the files a new kind
+  needs and the files it does not touch, with the diff of commit
+  2547d87 as the proof. `scripts/kind-check.sh` fails CI when
+  `pkg/storage` or `pkg/apiserver/storage.go` names a kind.
+- **Order across kinds.** A section in ADR 0003: which rules of the
+  spec compare two objects, and why each one rests on a conditional
+  write or a causal order and not on one counter. The Quint model
+  already has one counter per resource; the section names the
+  invariants that check it.
+
+## M24: Observability and trust
+
+- **Metrics and the audit trail**, issues #225 to #229, as filed.
+- **ADR 0022 decided.** Option 1: a shared catalog with minimal holder
+  data, and a partition per member for its own objects.
+- **Per-member credentials.** On DynamoDB, an IAM policy with
+  `dynamodb:LeadingKeys` on the member's partition; on etcd, a role per
+  member. A test with two members' credentials shows that one cannot
+  write the other's Member or usage set.
+- **#232.** The etcd store starts without etcd.
+
+## M25: The confidence ladder
+
+- **`docs/confidence.md`.** One table: each claim that the README, the
+  ADRs, and the spec make, with the model check, the simulator
+  property, the test, or the benchmark row that backs it. A claim with
+  none says "open". CLAUDE.md already names this file; it does not
+  exist yet.
+- **`docs/brief.md`.** For engineers and leads who decide whether to
+  back solas: the problem, the pattern, the evidence with a link to
+  each row, the limits, the cost of a kind, and the open decisions. The
+  same shape that a decision brief has, so it reads next to others.
+
+## Order
+
+M22 first: it is local, it changes the numbers that M20 measures, and
+#237 removes most of the table reads before the DynamoDB runs cost
+anything. Then M20 and M21 in parallel: M20 is runs and rows, M21 is
+code. M23 after M21, because the deep soak runs through the gatekeeper.
+M24 after M20, because the partition per member changes the table
+layout, and the M20 rows should measure the layout that ships. M25
+last; it only collects.
+
+## The cost of M20
+
+DynamoDB on-demand in us-east-1 charges $0.625 per million write
+request units and $0.125 per million read request units (prices of
+November 2024; check the pricing page for the region). A transaction
+costs two write units per item, and a bind or a release writes three
+items of under 1 KB, so one bind costs about six write units. A
+strongly consistent read of an item under 4 KB costs one read unit.
+
+| Run | Writes | Reads | Cost |
+|-----|-------:|------:|-----:|
+| Scale series, default pool, 3 runs of 20 s | under 1 million | under 1 million | under $1 |
+| Counter ceiling, 5 runs of 20 s | about 1 million | small | about $1 |
+| 10,000 devices, 4 runs of 20 s, lists from the table | small | about 20 million, throttled by the partition | about $3 |
+| 128 members from EC2, 4 runs | about 2 million | about 10 million | about $3 |
+| Three regions, 3 runs each | under 1 million each | under 3 million each | about $2 |
+| Poll interval series, 3 runs of 60 s | small | about 2 million | under $1 |
+| Soak, 2 hours, two clusters | about 20 thousand | about 1 million | under $1 |
+| EC2 c6i.2xlarge for the 128 member runs, 4 hours | | | about $1.50 |
+| Data transfer out, under 20 GB | | | under $2 |
+
+The expected total is about $15. A billing alarm at $50 and a hard stop
+in the script when a run passes 10 million units keep a mistake small.
+Every table is deleted at the end of its run, and nothing persists
+between runs except the rows on the benchmarks page.
+
+What the account needs: one IAM user or role with a policy limited to
+`dynamodb:*` on tables named `solas-bench-*` in the three regions, plus
+`cloudwatch:PutMetricAlarm` for the billing alarm, and, for the 128
+member runs, `ec2:RunInstances` for one instance that the script
+terminates. Credentials come from the environment and are never written
+to the repository.
