@@ -7,6 +7,8 @@ package audit
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,6 +40,8 @@ type Summary struct {
 	OfferBinds int
 	Recoveries int
 	Deletes    int
+	// Restarts counts the times Follow started its watch again.
+	Restarts   int
 	Violations []Violation
 }
 
@@ -49,6 +53,7 @@ type Replay struct {
 	// holders maps a device and a token to the claim that got the token,
 	// as member/namespace/name.
 	holders map[string]map[int64]string
+	mu      sync.Mutex
 }
 
 // New returns an empty replay.
@@ -197,6 +202,96 @@ func (r *Replay) ReadStore(ctx context.Context, s storage.Interface, prefix stri
 // accepted must come from the claim that held the device with that
 // token.
 func (r *Replay) Holder(device string, token int64) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	h, ok := r.holders[device][token]
 	return h, ok
+}
+
+// Follow replays the history as it happens, from the current state until
+// ctx ends. It starts a watch with no version, which gives the current
+// state as ADDED events and then every change, and when the watch ends,
+// for example while the store does not answer, it starts again from the
+// last version it saw. A soak uses it for the whole run, so a store that
+// compacts or expires old events, as etcd does every five minutes and
+// DynamoDB after the event retention, loses nothing of the audit.
+// Follow returns the error that ended it when ctx is not done.
+func (r *Replay) Follow(ctx context.Context, s storage.Interface, prefix string) error {
+	versioner := storage.APIObjectVersioner{}
+	var last uint64
+	for {
+		from := "0"
+		if last > 0 {
+			from = fmt.Sprint(last)
+		}
+		w, err := s.Watch(ctx, prefix, storage.ListOptions{ResourceVersion: from, Recursive: true, Predicate: storage.Everything})
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			r.Restarts++
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		err = r.consume(ctx, w, versioner, &last)
+		w.Stop()
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		r.Restarts++
+	}
+}
+
+// consume applies the events of one watch until it ends or ctx is done.
+// A 410 Gone is an error: the store let go of events that the replay did
+// not see. Any other end of the watch returns nil, and Follow restarts.
+func (r *Replay) consume(ctx context.Context, w watch.Interface, versioner storage.APIObjectVersioner, last *uint64) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case e, ok := <-w.ResultChan():
+			if !ok {
+				return nil
+			}
+			if e.Type == watch.Error {
+				if st, ok := e.Object.(*metav1.Status); ok && st.Code == http.StatusGone {
+					return fmt.Errorf("the store let go of events the replay did not see: %s", st.Message)
+				}
+				return nil
+			}
+			if e.Type == watch.Bookmark {
+				if rv, err := versioner.ObjectResourceVersion(e.Object); err == nil && rv > *last {
+					*last = rv
+				}
+				continue
+			}
+			d, ok := e.Object.(*solas.Device)
+			if !ok {
+				return fmt.Errorf("event holds a %T, want a Device", e.Object)
+			}
+			r.mu.Lock()
+			r.Apply(e.Type, d)
+			r.mu.Unlock()
+			if rv, err := versioner.ObjectResourceVersion(d); err == nil && rv > *last {
+				*last = rv
+			}
+		}
+	}
+}
+
+// Snapshot returns a copy of the summary, safe while Follow runs.
+func (r *Replay) Snapshot() Summary {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := r.Summary
+	s.Violations = append([]Violation(nil), r.Violations...)
+	return s
 }

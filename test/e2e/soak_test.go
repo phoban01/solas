@@ -69,6 +69,8 @@ type soak struct {
 	start       time.Time
 	// loadRow is the row that solas-bench printed, when SOAK_LOAD ran it.
 	loadRow string
+	// replay follows the Device history of the store through the run.
+	replay *audit.Replay
 }
 
 // startLoad starts solas-bench against the same store for the length of
@@ -146,6 +148,7 @@ func TestSoak(t *testing.T) {
 	})
 
 	s.setup(ctx)
+	stopFollow := s.follow(ctx)
 	s.logf("soak: %s for %s, seed %d", store, duration, seed)
 	load := s.startLoad(ctx, duration)
 	deadline := time.Now().Add(duration)
@@ -159,6 +162,7 @@ func TestSoak(t *testing.T) {
 		_, _ = runQuiet("docker", "unpause", c)
 	}
 	s.loadRow = load()
+	stopFollow()
 	eventually(t, 240*time.Second, "no claim Suspended and no claim Pending that a free device could serve", func(ctx context.Context) bool {
 		s.housekeeping(ctx)
 		for _, c := range s.clients {
@@ -316,23 +320,39 @@ func (s *soak) fault() {
 	}
 }
 
-// verify replays the Device history of the store and reads the
-// gatekeeper log, then prints the summary of the run.
-func (s *soak) verify(ctx context.Context) {
+// follow starts the audit replay on the store's history and keeps it
+// following through the run, so compaction on etcd and the event
+// retention on DynamoDB lose nothing. It returns the function that
+// stops the follower; verify reads the summary after that.
+func (s *soak) follow(ctx context.Context) func() {
 	t := s.t
 	url := strings.TrimSpace(run(t, "", root+"/demo/k3d/mesh.sh", "url", s.store))
 	st, err := migrate.Open(ctx, url, "/registry")
 	if err != nil {
 		t.Fatalf("open the store: %v", err)
 	}
-	defer st.Close()
-	replay := audit.New()
-	rctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	if err := replay.ReadStore(rctx, st.Devices, "/solas.dev/devices"); err != nil {
-		t.Fatalf("replay the device history: %v", err)
+	s.replay = audit.New()
+	fctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- s.replay.Follow(fctx, st.Devices, "/solas.dev/devices") }()
+	eventually(t, 30*time.Second, "the audit follower has the current state", func(context.Context) bool {
+		return s.replay.Snapshot().Events > 0
+	})
+	return func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("the audit follower stopped: %v", err)
+		}
+		st.Close()
 	}
-	for _, v := range replay.Violations {
+}
+
+// verify checks the followed history, reads the gatekeeper and the
+// actuator logs, and prints the summary of the run.
+func (s *soak) verify(ctx context.Context) {
+	t := s.t
+	replay := s.replay
+	for _, v := range replay.Snapshot().Violations {
 		t.Errorf("history: %s", v)
 	}
 
@@ -406,8 +426,12 @@ func (s *soak) verify(ctx context.Context) {
 	t.Logf("soak summary (%s, %s):", s.store, time.Since(s.start).Round(time.Second))
 	t.Logf("  faults: %s; %d fault steps skipped because a paused cluster did not answer", strings.Join(faults, ", "), s.skipped)
 	t.Logf("  takeovers: %d member UID changes, %d Lost claims deleted and created again", s.uidChanges, s.lostDeleted)
+	sum := replay.Snapshot()
 	t.Logf("  history: %d events, %d binds, %d releases, %d binds against an offer, %d recoveries, %d deletes, %d violations",
-		replay.Events, replay.Binds, replay.Releases, replay.OfferBinds, replay.Recoveries, replay.Deletes, len(replay.Violations))
+		sum.Events, sum.Binds, sum.Releases, sum.OfferBinds, sum.Recoveries, sum.Deletes, len(sum.Violations))
+	if sum.Restarts > 0 {
+		t.Logf("  the follower started its watch again %d times, while the store did not answer", sum.Restarts)
+	}
 	t.Logf("  actuator: %d calls accepted through the gatekeeper, each from the holder of the token at the time", len(calls))
 	if s.loadRow != "" {
 		t.Logf("  load: solas-bench row (store members claims devices binds/s conflict%% bind p50 p99 list p50 p99 sync lag p50 p99 reads errors):\n    %s", s.loadRow)
