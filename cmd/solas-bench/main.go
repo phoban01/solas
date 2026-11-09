@@ -521,12 +521,17 @@ func reset(ctx context.Context, m *member, want int) error {
 	if err != nil {
 		return err
 	}
+	// Only the bench's own devices: a shared store has others.
+	var own []*solas.Device
 	for i := range devices {
-		d := &devices[i]
-		// Only the bench's own devices: a shared store has others.
-		if d.Spec.Attributes["bench"] != "true" {
-			continue
+		if devices[i].Spec.Attributes["bench"] == "true" {
+			own = append(own, &devices[i])
 		}
+	}
+	// Sixteen at a time: on a real table each call is a round trip, and a
+	// pool of 10,000 devices would take minutes one by one.
+	err = each(ctx, len(own), func(i int) error {
+		d := own[i]
 		if d.Status.ClaimRef != nil {
 			if _, err := m.writeRef(ctx, d, nil); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("release %s: %w", d.Name, err)
@@ -535,15 +540,57 @@ func reset(ctx context.Context, m *member, want int) error {
 		if _, _, err := m.rest.Delete(reqCtx(ctx), d.Name, rest.ValidateAllObjectFunc, &metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete %s: %w", d.Name, err)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	for i := range want {
+	return each(ctx, want, func(i int) error {
 		d := &solas.Device{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("bench-%04d", i), Labels: map[string]string{"bench": "true"}}}
 		d.Spec.Attributes = map[string]string{"bench": "true"}
 		if _, err := m.rest.Create(reqCtx(ctx), d, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create %s: %w", d.Name, err)
 		}
+		return nil
+	})
+}
+
+// each runs f for 0 to n-1 with sixteen workers and returns the first
+// error.
+func each(ctx context.Context, n int, f func(i int) error) error {
+	const workers = 16
+	var wg sync.WaitGroup
+	idx := make(chan int)
+	var firstErr error
+	var mu sync.Mutex
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idx {
+				if err := f(i); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+				}
+			}
+		}()
 	}
-	return nil
+	for i := 0; i < n; i++ {
+		select {
+		case <-ctx.Done():
+			i = n
+		case idx <- i:
+		}
+	}
+	close(idx)
+	wg.Wait()
+	if firstErr == nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return firstErr
 }
 
 // waitListAny lists the devices until the cache answers.
