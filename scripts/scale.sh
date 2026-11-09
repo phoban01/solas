@@ -8,6 +8,9 @@
 #   SCALE_DURATION  length of each run, default 10s
 #   SCALE_STORES    stores to run on, default "dynamodb etcd"
 #   SCALE_DEVICES   devices in the pool, default members * claims
+#   SOLAS_DYNAMODB_URL  a storage URL of a real table, from
+#                   scripts/aws-bench.sh url <region>; then no dynamodb-local
+#                   starts, and the script prints the round trip to the region
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
@@ -15,6 +18,14 @@ cd "$root"
 # shellcheck source=scripts/local-stores.sh
 source scripts/local-stores.sh
 trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+if [ -n "${SOLAS_DYNAMODB_URL:-}" ]; then
+  # A real table: no local DynamoDB, and the bench role's session.
+  export SOLAS_DYNAMODB_ENDPOINT=none
+  eval "$(scripts/aws-bench.sh env)"
+  region=$(echo "$SOLAS_DYNAMODB_URL" | sed -n 's/.*region=\([a-z0-9-]*\).*/\1/p')
+  rtt=$(curl -s -o /dev/null -w '%{time_connect}' "https://dynamodb.$region.amazonaws.com/")
+  echo "scale: DynamoDB in $region, TCP connect ${rtt}s from this host" >&2
+fi
 start_local_stores scale >&2
 
 bin=$(mktemp -d)/solas-bench
@@ -26,7 +37,7 @@ for store in ${SCALE_STORES:-dynamodb etcd}; do
   case $store in
   dynamodb)
     [ -n "${SOLAS_DYNAMODB_ENDPOINT:-}" ] || continue
-    url="dynamodb://solas-bench?create-table=true&endpoint=$SOLAS_DYNAMODB_ENDPOINT"
+    url=${SOLAS_DYNAMODB_URL:-"dynamodb://solas-bench?create-table=true&endpoint=$SOLAS_DYNAMODB_ENDPOINT"}
     ;;
   etcd)
     [ -n "${SOLAS_ETCD_ENDPOINT:-}" ] || continue
