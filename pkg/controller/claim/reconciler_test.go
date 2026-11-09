@@ -566,3 +566,18 @@ func TestSuspendWithoutStore(t *testing.T) {
 		t.Errorf("claim after the store returned = %+v, want Bound on d1 with token 1", got)
 	}
 }
+
+//= spec/solas.md#16-2-claims
+//= type=test
+//# The controller MUST retry a failed reconcile within `D / 3`.
+
+func TestRetryLimiterStaysWithinResync(t *testing.T) {
+	resync := 10 * time.Second
+	l := RetryLimiter(resync)
+	item := reconcile.Request{NamespacedName: client.ObjectKey{Namespace: "ns", Name: "c1"}}
+	for i := range 30 {
+		if d := l.When(item); d > resync {
+			t.Fatalf("delay after %d failures = %v, want at most %v", i+1, d, resync)
+		}
+	}
+}

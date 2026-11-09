@@ -694,3 +694,4 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: The controller MUST set a `Bound` claim to `Suspended` without a read of
     TEXT[!MUST,implementation,test]: the store, when its member is not live, section 6.5.
     TEXT[!MUST,implementation,test]: The controller MUST bound each request to its API server to `D / 3`.
+    TEXT[!MUST,implementation,test]: The controller MUST retry a failed reconcile within `D / 3`.

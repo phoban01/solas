@@ -37,6 +37,15 @@ func (w *workload) run(ctx context.Context) error {
 	t := time.NewTicker(w.every)
 	defer t.Stop()
 	for {
+		//= spec/solas.md#6-5-phases
+		//# Workloads MUST use a device only while its claim is in effect.
+		//
+		// The workload acts on the phase it last read, then reads again.
+		// A workload that wakes from a pause acts on its old view first, as
+		// a real one would; the fencing token keeps the device safe.
+		if phase == claimsv1alpha1.ClaimBound {
+			w.use(ctx, token)
+		}
 		if time.Since(readAt) >= w.refresh {
 			var claim claimsv1alpha1.DeviceClaim
 			if err := w.client.Get(ctx, w.key, &claim); err != nil {
@@ -48,14 +57,6 @@ func (w *workload) run(ctx context.Context) error {
 				phase, token = claim.Status.Phase, claim.Status.FencingToken
 				readAt = time.Now()
 			}
-		}
-		//= spec/solas.md#6-5-phases
-		//# Workloads MUST use a device only while its claim is in effect.
-		//
-		// The workload goes by the phase it last read. When that view is
-		// out of date, the fencing token keeps the device safe.
-		if phase == claimsv1alpha1.ClaimBound {
-			w.use(ctx, token)
 		}
 		select {
 		case <-ctx.Done():

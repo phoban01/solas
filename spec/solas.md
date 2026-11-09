@@ -1148,6 +1148,9 @@ and delete them during an outage.
 The controller MUST bound each request to its API server to `D / 3`.
 A request that waits for a store that does not answer then fails before
 the lease lapses, and the controller suspends the claims in time.
+The controller MUST retry a failed reconcile within `D / 3`.
+Without a bound, each failed read during an outage doubles the wait
+before the next try, and the suspend comes minutes late.
 A delete waits for the release of its device, section 6.4, until the
 store returns.
 
