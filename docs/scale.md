@@ -26,6 +26,8 @@ The columns:
 | binds/s | successful binds per second over all members |
 | conflict% | binds that failed with `409 Conflict`, as a share of all bind attempts |
 | bind p50 ms, bind p99 ms | latency of a successful bind, from the request to the answer |
+| list p50 ms, list p99 ms | latency of the consistent list before a bind attempt |
+| sync ms | the longest time a member needed to serve the whole pool from its cache before the run, as an informer sync would |
 | lag p50 ms, lag p99 ms | time from a write to the event at a watcher, over every watcher |
 | reads/member/s | DynamoDB `GetItem` and `Query` calls per member per second, lists and polls included; not measured on etcd |
 | errors | requests that failed with another error |

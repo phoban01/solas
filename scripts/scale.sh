@@ -7,6 +7,7 @@
 #   SCALE_CLAIMS    claims per member, default 8
 #   SCALE_DURATION  length of each run, default 10s
 #   SCALE_STORES    stores to run on, default "dynamodb etcd"
+#   SCALE_DEVICES   devices in the pool, default members * claims
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
@@ -40,7 +41,7 @@ for store in ${SCALE_STORES:-dynamodb etcd}; do
     AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-local} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-local} \
       AWS_REGION=${AWS_REGION:-us-east-1} \
       "$bin" --storage-url "$url" --members "$members" --claims "${SCALE_CLAIMS:-8}" \
-      --duration "${SCALE_DURATION:-10s}" --header="$header" 2> >(grep -vE '^(SDK |[IWE][0-9]{4} )' >&2)
+      --duration "${SCALE_DURATION:-10s}" --devices "${SCALE_DEVICES:-0}" --header="$header" 2> >(grep -vE '^(SDK |[IWE][0-9]{4} )' >&2)
     header=false
   done
 done

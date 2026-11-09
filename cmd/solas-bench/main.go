@@ -185,7 +185,11 @@ type stats struct {
 	binds, releases, conflicts, errors atomic.Int64
 	mu                                 sync.Mutex
 	bindLatency                        []time.Duration
+	listLatency                        []time.Duration
 	watchLag                           []time.Duration
+	// sync is the longest time a member's cache took to serve the whole
+	// pool before the run, as an informer sync would.
+	sync time.Duration
 	// writes maps device/version to the time of its write, and arrivals
 	// maps it to the first time a watch saw it, for whichever comes first.
 	writes, arrivals sync.Map
@@ -220,6 +224,12 @@ func (s *stats) bound(d time.Duration) {
 	s.mu.Unlock()
 }
 
+func (s *stats) listed(d time.Duration) {
+	s.mu.Lock()
+	s.listLatency = append(s.listLatency, d)
+	s.mu.Unlock()
+}
+
 // percentile returns the p-th percentile of ds, or 0 when ds is empty.
 func percentile(ds []time.Duration, p float64) time.Duration {
 	if len(ds) == 0 {
@@ -243,14 +253,13 @@ func run(ctx context.Context, o options) error {
 			m.destroy()
 		}
 	}()
-	for i := range o.members {
-		m, err := newMember(g, i)
-		if err != nil {
-			return err
-		}
-		members = append(members, m)
+	// The first member prepares the pool. The others start once the pool
+	// exists, so their first list measures a sync of the whole pool.
+	admin, err := newMember(g, 0)
+	if err != nil {
+		return err
 	}
-	admin := members[0]
+	members = append(members, admin)
 	if err := reset(ctx, admin, o.devices); err != nil {
 		return fmt.Errorf("prepare the device pool: %w", err)
 	}
@@ -261,21 +270,29 @@ func run(ctx context.Context, o options) error {
 			fmt.Fprintln(os.Stderr, "solas-bench: clean up:", err)
 		}
 	}()
-	// Every member's cache must have the pool before the run.
-	for _, m := range members {
+	var st stats
+	for i := 1; i < o.members; i++ {
+		from := time.Now()
+		m, err := newMember(g, i)
+		if err != nil {
+			return err
+		}
+		members = append(members, m)
 		if _, _, err := waitList(ctx, m, o.devices); err != nil {
 			return err
 		}
+		st.sync = max(st.sync, time.Since(from))
+	}
+	if _, _, err := waitList(ctx, admin, o.devices); err != nil {
+		return err
 	}
 
 	// The workers stop between two requests when stop closes, so no
-	// request is cut off in flight at the end of the run.
-	var st stats
+	// request is cut off in flight at the end of the run. The timer
+	// starts once every worker runs, below.
 	stop := make(chan struct{})
 	var once sync.Once
 	end := func() { once.Do(func() { close(stop) }) }
-	timer := time.AfterFunc(o.duration, end)
-	defer timer.Stop()
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -284,6 +301,7 @@ func run(ctx context.Context, o options) error {
 		}
 	}()
 	var wg sync.WaitGroup
+	begin := make(chan struct{})
 	for _, m := range members {
 		_, rv, err := m.list(ctx)
 		if err != nil {
@@ -303,6 +321,7 @@ func run(ctx context.Context, o options) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				<-begin
 				claimLoop(ctx, stop, m, c, &st)
 			}()
 		}
@@ -311,6 +330,10 @@ func run(ctx context.Context, o options) error {
 	if counter != nil {
 		readsBefore, writesBefore = counter.reads.Load(), counter.writes.Load()
 	}
+	// Every watch runs; now the claims start together, and the clock.
+	close(begin)
+	timer := time.AfterFunc(o.duration, end)
+	defer timer.Stop()
 	start := time.Now()
 	wg.Wait()
 	elapsed := time.Since(start)
@@ -334,10 +357,12 @@ func run(ctx context.Context, o options) error {
 		store = "etcd"
 	}
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
-	cols := []string{"store", "members", "claims", "devices", "binds/s", "conflict%", "bind p50 ms", "bind p99 ms", "lag p50 ms", "lag p99 ms", "reads/member/s", "errors"}
+	cols := []string{"store", "members", "claims", "devices", "binds/s", "conflict%", "bind p50 ms", "bind p99 ms",
+		"list p50 ms", "list p99 ms", "sync ms", "lag p50 ms", "lag p99 ms", "reads/member/s", "errors"}
 	row := []string{store, fmt.Sprint(o.members), fmt.Sprint(o.claims), fmt.Sprint(o.devices),
 		fmt.Sprintf("%.1f", float64(binds)/elapsed.Seconds()), fmt.Sprintf("%.1f", conflictRate),
 		ms(percentile(st.bindLatency, 0.5)), ms(percentile(st.bindLatency, 0.99)),
+		ms(percentile(st.listLatency, 0.5)), ms(percentile(st.listLatency, 0.99)), ms(st.sync),
 		ms(percentile(st.watchLag, 0.5)), ms(percentile(st.watchLag, 0.99)),
 		reads, fmt.Sprint(st.errors.Load())}
 	if o.header {
@@ -445,11 +470,13 @@ func claimLoop(ctx context.Context, stop <-chan struct{}, m *member, claim int, 
 			return
 		default:
 		}
+		from := time.Now()
 		devices, _, err := m.list(ctx)
 		if err != nil {
 			st.fail(ctx, err)
 			continue
 		}
+		st.listed(time.Since(from))
 		var free []*solas.Device
 		for i := range devices {
 			if devices[i].Status.ClaimRef == nil {
