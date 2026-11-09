@@ -674,3 +674,15 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: It MUST NOT remove such an entry before a grace that is longer than the
     TEXT[!MUST,implementation,test]: deadline of a request has passed since the entry was added, by its own
     TEXT[!MUST,implementation,test]: clock.
+
+  SECTION: [16.1. The server](#16-1-the-server)
+    TEXT[!MUST,implementation,test]: The readiness of the server MUST NOT depend on the store.
+    TEXT[!MUST,implementation,test]: The server MUST start when the DynamoDB store does not answer.
+    TEXT[!MUST,implementation,test]: Until the server has read the finalized format and the epoch of the
+    TEXT[!MUST,implementation,test]: store, it MUST reject every write with `503 ServiceUnavailable`.
+    TEXT[!MUST,implementation,test]: A write that fails because the server cannot reach the store MUST fail
+    TEXT[!MUST,implementation,test]: with `503 ServiceUnavailable`.
+
+  SECTION: [16.2. Claims](#16-2-claims)
+    TEXT[!MUST,implementation,test]: The controller MUST set a `Bound` claim to `Suspended` without a read of
+    TEXT[!MUST,implementation,test]: the store, when its member is not live, section 6.5.

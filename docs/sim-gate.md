@@ -85,3 +85,10 @@ The broken-store test first found nothing. Each reconcile read and wrote
 in one step, so no race between two clusters could happen, and the
 checks that guard against races were never needed. Late device lists
 fixed that: with them, the broken store fails within a few dozen steps.
+
+The store outage test (`TestSimStoreOutage`) first drove only the member
+managers and the sweepers through the outage. When it also reconciled
+the claims, it found that a `Bound` claim stayed `Bound` through the
+whole outage: the reconciler listed the devices before it checked the
+lease, and the list failed. The reconciler now suspends the claim before
+it reads the store, spec 16.2.

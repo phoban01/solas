@@ -502,3 +502,67 @@ func TestMarkLostCoversEveryHeldPhase(t *testing.T) {
 		}
 	}
 }
+
+// storeDown is a Reader whose reads of Devices fail, as in a store outage.
+// Reads of claims, which live in the cluster, still work.
+type storeDown struct{ client.Reader }
+
+func (s storeDown) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*solasv1alpha1.Device); ok {
+		return apierrors.NewServiceUnavailable("the shared store did not answer")
+	}
+	return s.Reader.Get(ctx, key, obj, opts...)
+}
+
+func (s storeDown) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := list.(*solasv1alpha1.DeviceList); ok {
+		return apierrors.NewServiceUnavailable("the shared store did not answer")
+	}
+	return s.Reader.List(ctx, list, opts...)
+}
+
+//= spec/solas.md#16-2-claims
+//= type=test
+//# The controller MUST set a `Bound` claim to `Suspended` without a read of
+//# the store, when its member is not live, section 6.5.
+
+// TestSuspendWithoutStore: the store goes down and the lease lapses. The
+// claim goes to Suspended although every read of a Device fails. When the
+// store returns and the member renews, the claim is Bound again on the
+// same device with the same token.
+func TestSuspendWithoutStore(t *testing.T) {
+	c1 := claim("c1", "u1")
+	k := fakekube.NewClient(device("d1", nil, nil), c1)
+	m := live()
+	r := newReconciler(k, m)
+	settle(t, r, c1)
+	if p := getClaim(t, k, "c1").Status.Phase; p != claimsv1alpha1.ClaimBound {
+		t.Fatalf("phase = %s, want Bound", p)
+	}
+
+	r.Reader = storeDown{k}
+	m.st.Live = false
+	req := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(c1)}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile of a Bound claim under a lapsed lease with the store down: %v", err)
+	}
+	if p := getClaim(t, k, "c1").Status.Phase; p != claimsv1alpha1.ClaimSuspended {
+		t.Fatalf("phase = %s, want Suspended", p)
+	}
+	// A Suspended claim needs the store to go back to Bound, so its
+	// reconcile fails while the store is down, and the claim stays as it is.
+	if _, err := r.Reconcile(context.Background(), req); err == nil {
+		t.Error("reconcile of a Suspended claim with the store down: no error, want the store error")
+	}
+	if p := getClaim(t, k, "c1").Status.Phase; p != claimsv1alpha1.ClaimSuspended {
+		t.Fatalf("phase = %s after a failed reconcile, want Suspended", p)
+	}
+
+	r.Reader = k
+	m.st.Live = true
+	settle(t, r, c1)
+	got := getClaim(t, k, "c1").Status
+	if got.Phase != claimsv1alpha1.ClaimBound || got.DeviceName != "d1" || got.FencingToken != 1 {
+		t.Errorf("claim after the store returned = %+v, want Bound on d1 with token 1", got)
+	}
+}

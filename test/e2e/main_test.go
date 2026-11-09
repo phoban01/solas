@@ -101,3 +101,12 @@ func run(t *testing.T, stdin string, name string, args ...string) string {
 	}
 	return string(out)
 }
+
+// execCommand runs a command with the repository as the working directory
+// and returns its combined output.
+func execCommand(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}

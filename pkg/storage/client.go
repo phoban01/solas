@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
@@ -12,6 +14,14 @@ import (
 // defaultRegion is the AWS region when neither the storage URL nor the
 // environment names one.
 const defaultRegion = "us-east-1"
+
+// CallTimeout bounds each call to DynamoDB, so a store that hangs fails
+// the request instead of holding it, spec 16.1. Each call makes at most
+// CallAttempts attempts.
+const (
+	CallTimeout  = 10 * time.Second
+	CallAttempts = 2
+)
 
 // DynamoClient returns a DynamoDB client for a DynamoDB storage URL. The
 // credentials come from the AWS environment.
@@ -31,5 +41,7 @@ func DynamoClient(ctx context.Context, c Config) (*dynamodb.Client, error) {
 		if c.Endpoint != "" {
 			opts.BaseEndpoint = aws.String(c.Endpoint)
 		}
+		opts.HTTPClient = awshttp.NewBuildableClient().WithTimeout(CallTimeout)
+		opts.RetryMaxAttempts = CallAttempts
 	}), nil
 }
