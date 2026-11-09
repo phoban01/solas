@@ -31,6 +31,7 @@ spec:
             - --lease-duration=$(LEASE_DURATION)
             - --lease-margin=$(LEASE_MARGIN)
             - --sweep-interval=$(SWEEP_INTERVAL)
+            - --claim-workers=$(CLAIM_WORKERS)
           env:
             # The store and its credentials come from this Secret, so each
             # member cluster can point at the shared store. The AWS keys are
@@ -55,6 +56,12 @@ spec:
             - name: LEASE_MARGIN
               valueFrom:
                 configMapKeyRef: {name: solas-member, key: leaseMargin}
+            - name: CLAIM_WORKERS
+              valueFrom:
+                configMapKeyRef: {name: solas-member, key: claimWorkers}
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef: {name: solas-storage, key: sessionToken, optional: true}
             - name: SWEEP_INTERVAL
               valueFrom:
                 configMapKeyRef: {name: solas-member, key: sweepInterval}

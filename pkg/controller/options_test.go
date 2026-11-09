@@ -25,3 +25,15 @@ func TestOptionsValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestClaimWorkersDefaultAndBound(t *testing.T) {
+	o := NewOptions()
+	if o.ClaimWorkers != 4 {
+		t.Errorf("default claim workers = %d, want 4", o.ClaimWorkers)
+	}
+	o.ClusterID = "a"
+	o.ClaimWorkers = 0
+	if err := o.Validate(); err == nil {
+		t.Error("Validate accepted 0 claim workers")
+	}
+}

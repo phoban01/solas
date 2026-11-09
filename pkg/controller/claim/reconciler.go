@@ -41,6 +41,10 @@ type Reconciler struct {
 	Member    MemberState
 	// Resync is how often a claim is checked again, for example D / 3.
 	Resync time.Duration
+	// Workers is how many claims reconcile at once. Zero means one. Each
+	// bind is a conditional write, spec 6.3, so two workers that pick the
+	// same free device end with one bound and one listing again.
+	Workers int
 	// Clock measures the grace period of preemption. Nil means the wall clock.
 	Clock clock.PassiveClock
 	// Rand picks among free devices. Nil means a random seed. The simulator
@@ -68,8 +72,10 @@ func RetryLimiter(resync time.Duration) workqueue.TypedRateLimiter[reconcile.Req
 
 // SetupWithManager registers the reconciler.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	//= spec/solas.md#6-2-controller
+	//# The controller MAY reconcile several claims at once.
 	return ctrl.NewControllerManagedBy(mgr).For(&claimsv1alpha1.DeviceClaim{}).
-		WithOptions(controller.Options{RateLimiter: RetryLimiter(r.Resync)}).Complete(r)
+		WithOptions(controller.Options{RateLimiter: RetryLimiter(r.Resync), MaxConcurrentReconciles: max(1, r.Workers)}).Complete(r)
 }
 
 // Reconcile moves one claim toward its phase.

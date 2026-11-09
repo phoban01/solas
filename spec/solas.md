@@ -387,6 +387,11 @@ The controller MUST use a leader election lease in its own cluster.
 The controller MUST NOT bind while its member is not live by its own
 clock, as section 7.4 defines.
 The controller MUST NOT bind while its member is draining.
+The controller MAY reconcile several claims at once.
+Each bind is a conditional write, section 6.3, so two reconciles that
+pick the same free device end with one bound and one that lists again,
+and the store carries the writes that arrive together in one
+transaction, section 2.3.
 
 ### 6.3. Bind
 

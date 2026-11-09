@@ -21,6 +21,10 @@ type Options struct {
 	LeaseMargin time.Duration
 	// SweepInterval is how often the sweeper runs. It must not exceed D.
 	SweepInterval time.Duration
+	// ClaimWorkers is how many claims the controller reconciles at once.
+	// The store carries the writes of a server that arrive together in one
+	// transaction, spec 2.3, so several workers share a round trip.
+	ClaimWorkers int
 
 	MetricsAddr      string
 	ProbeAddr        string
@@ -34,6 +38,7 @@ func NewOptions() *Options {
 		LeaseDuration:    30 * time.Second,
 		LeaseMargin:      3 * time.Second,
 		SweepInterval:    10 * time.Second,
+		ClaimWorkers:     4,
 		MetricsAddr:      ":8080",
 		ProbeAddr:        ":8081",
 		LeaderElection:   true,
@@ -47,6 +52,7 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&o.LeaseDuration, "lease-duration", o.LeaseDuration, "Lease duration D.")
 	fs.DurationVar(&o.LeaseMargin, "lease-margin", o.LeaseMargin, "Safety margin M. It must be at least 2 * rho * D.")
 	fs.DurationVar(&o.SweepInterval, "sweep-interval", o.SweepInterval, "How often the sweeper runs. At most D.")
+	fs.IntVar(&o.ClaimWorkers, "claim-workers", o.ClaimWorkers, "How many claims the controller reconciles at once. Their writes share a transaction, spec 2.3.")
 	fs.StringVar(&o.MetricsAddr, "metrics-bind-address", o.MetricsAddr, "Address of the metrics endpoint.")
 	fs.StringVar(&o.ProbeAddr, "health-probe-bind-address", o.ProbeAddr, "Address of the health probes.")
 	fs.BoolVar(&o.LeaderElection, "leader-elect", o.LeaderElection, "Use a leader election lease in this cluster.")
@@ -63,6 +69,9 @@ func (o *Options) Validate() error {
 	//# The name of a `Member` MUST be the cluster ID of its member cluster.
 	for _, msg := range validation.IsDNS1123Subdomain(o.ClusterID) {
 		errs = append(errs, fmt.Errorf("--cluster-id: %s", msg))
+	}
+	if o.ClaimWorkers < 1 {
+		errs = append(errs, errors.New("--claim-workers must be at least 1"))
 	}
 	if o.LeaseDuration <= 0 {
 		errs = append(errs, errors.New("--lease-duration must be above 0"))

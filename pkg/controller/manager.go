@@ -59,6 +59,7 @@ func Run(ctx context.Context, cfg *rest.Config, o *Options) error {
 		Reader:    direct,
 		ClusterID: o.ClusterID,
 		Member:    members,
+		Workers:   o.ClaimWorkers,
 		Resync:    o.LeaseDuration / 3,
 	}
 	members.Drained = claims.Drained

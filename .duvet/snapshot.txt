@@ -217,6 +217,7 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: The controller MUST NOT bind while its member is not live by its own
     TEXT[!MUST,implementation,test]: clock, as section 7.4 defines.
     TEXT[!MUST,implementation]: The controller MUST NOT bind while its member is draining.
+    TEXT[!MAY,implementation]: The controller MAY reconcile several claims at once.
 
   SECTION: [6.3. Bind](#6-3-bind)
     TEXT[!MUST,implementation]: The controller MUST NOT bind a claim that has a deletion timestamp.
