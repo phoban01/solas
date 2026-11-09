@@ -148,11 +148,12 @@ pool. For the duration of the run, a seeded schedule pauses the store,
 pauses a cluster's node for longer than D, deletes a solas Pod, and
 creates and deletes claims. The H100 is behind the demo gatekeeper, and
 a workload in each cluster uses it with the token of its claim. At the
-end, `pkg/audit` replays the Device history of the store in version
-order and checks every transition: a bind raises the token, a release
-keeps it, and the holder changes only through a release, an offer, or a
-recovery. The gatekeeper log is checked too: the accepted tokens never
-go down, and every rejected use had a token below the highest accepted.
+end, the audit of `pkg/audit`, which has followed the Device history of
+the store in version order through the whole run, has checked every
+transition: a bind raises the token, a release keeps it, and the holder
+changes only through a release, an offer, or a recovery. The gatekeeper
+log is checked too: the accepted tokens never go down, and every
+rejected use had a token below the highest accepted.
 
 | Date | Commit | Store | Duration | Faults | Takeovers | History | Violations | Gatekeeper |
 |------|--------|-------|---------:|--------|----------:|---------|-----------:|------------|

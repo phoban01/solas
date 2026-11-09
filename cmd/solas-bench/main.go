@@ -56,6 +56,8 @@ type options struct {
 	header     bool
 	// memberLease, when set, gives each simulated member a Member object.
 	memberLease time.Duration
+	// maxUnits stops a run whose DynamoDB request units pass it.
+	maxUnits int64
 }
 
 func main() {
@@ -68,6 +70,7 @@ func main() {
 	fs.IntVar(&o.devices, "devices", 0, "devices in the pool; 0 means members * claims")
 	fs.DurationVar(&o.duration, "duration", 10*time.Second, "how long the claims run")
 	fs.BoolVar(&o.header, "header", true, "print the header row")
+	fs.Int64Var(&o.maxUnits, "max-units", 10_000_000, "stop the run when its DynamoDB request units (calls counted by the tool) pass this; a cost guard on a real table")
 	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")
 	_ = fs.Parse(os.Args[1:])
 	if o.storageURL == "" {
@@ -427,6 +430,25 @@ func run(ctx context.Context, o options) error {
 	var readsBefore, writesBefore int64
 	if counter != nil {
 		readsBefore, writesBefore = counter.reads.Load(), counter.writes.Load()
+		// The cost guard: a run on a real table stops when its request
+		// units pass --max-units, so a mistake stays small.
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+				}
+				used := counter.reads.Load() - readsBefore + counter.writes.Load() - writesBefore
+				if overBudget(used, o.maxUnits) {
+					fmt.Fprintf(os.Stderr, "solas-bench: stopped: %d request units passed --max-units %d\n", used, o.maxUnits)
+					end()
+					return
+				}
+			}
+		}()
 	}
 	// Every watch runs; now the claims start together, and the clock.
 	close(begin)
@@ -443,7 +465,6 @@ func run(ctx context.Context, o options) error {
 	if counter != nil {
 		perMember := float64(counter.reads.Load()-readsBefore) / float64(o.members) / elapsed.Seconds()
 		reads = fmt.Sprintf("%.1f", perMember)
-		_ = writesBefore
 	}
 	binds, conflicts := st.binds.Load(), st.conflicts.Load()
 	conflictRate := 0.0
@@ -636,3 +657,7 @@ func (s *stats) fail(ctx context.Context, err error) {
 		fmt.Fprintln(os.Stderr, "solas-bench:", err)
 	}
 }
+
+// overBudget reports whether used request units passed the limit. A
+// limit of 0 or less means no limit.
+func overBudget(used, limit int64) bool { return limit > 0 && used > limit }
