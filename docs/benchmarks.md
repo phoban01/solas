@@ -189,6 +189,34 @@ and 2 seconds when eight members sync together. The conflict rate is
 zero, because the claims rarely pick the same device; the bind latency
 is the counter, not the race.
 
+
+### After the batched writes (spec 2.3, commit 92085cf)
+
+The same runs on a new eu-west-1 table with the writes of a server
+batched into one transaction. The column "writes/tx" is how many writes
+a transaction carried on average.
+
+| Date | Commit | Region, connect | Members | Devices | Run | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Writes/tx | Errors |
+|------|--------|-----------------|--------:|--------:|----:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|----------:|-------:|
+| 2026-11-09 | dcbdf8e | eu-west-1, 41 ms | 2 | 16 | 20 s | 11.8 | 45.5 | 336.1 | 878.8 | 58.8 | 109.7 | 119.0 | 68.6 | 215.3 | 59.4 | 1.6 | 0 |
+| 2026-11-09 | dcbdf8e | eu-west-1, 41 ms | 8 | 64 | 20 s | 28.4 | 47.4 | 437.3 | 1853.0 | 63.1 | 119.5 | 123.6 | 86.9 | 229.3 | 43.3 | 2.8 | 0 |
+| 2026-11-09 | dcbdf8e | eu-west-1, 41 ms | 32 | 256 | 20 s | 25.6 | 47.2 | 2016.4 | 7442.8 | 70.7 | 395.9 | 227.2 | 119.9 | 239.9 | 20.9 | 3.1 | 0 |
+| 2026-11-09 | dcbdf8e | eu-west-1, 21 ms | 8 | 64 | 300 s | 27.9 | 46.4 | 432.8 | 1855.4 | 65.6 | 121.1 | 124.7 | 89.5 | 230.6 | 42.8 | 2.8 | 0 |
+| 2026-11-09 | dcbdf8e | eu-west-1, 20 ms | 2 | 10000 | 20 s | 28.8 | 0.5 | 113.5 | 998.7 | 74.1 | 166.8 | 836.2 | 84.3 | 220.2 | 61.6 | 7.1 | 0 |
+| 2026-11-09 | dcbdf8e | eu-west-1, 20 ms | 8 | 10000 | 20 s | 39.1 | 0.4 | 474.8 | 3564.4 | 69.3 | 184.1 | 840.6 | 112.0 | 240.1 | 35.1 | 6.9 | 0 |
+
+**Two to three times the binds, and the batch size says why.** At 8
+members the binds per second went from 11.1 to 28.4 with 2.8 writes per
+transaction, and the five minute run held 27.9. At 10,000 devices,
+where the claims rarely race for a device and so rarely wait on a
+`409`, a transaction carried 7 writes and the binds went from 13.5 to
+28.8 at 2 members and from 12.5 to 39.1 at 8. The rate now follows the
+writes a server has in flight: one claim per member at 2 members gave
+1.6 writes per transaction and no gain. The ceiling that remains is the
+counter item shared by the servers, about one transaction per two round
+trips across them all, which issue #267 is for; and a cluster's one
+claim worker, which issue #268 is for. No run had an error once the
+bench retried without the SDK's shared quota.
 ### Three regions, one client
 
 The default series from the VM against a table in each region, 20

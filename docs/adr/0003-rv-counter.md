@@ -93,7 +93,11 @@ conflict; the rest try again. The Quint store model has the batched
 write, and `TestCommitBatchesConcurrentWrites` shows forty concurrent
 writes in fewer transactions with consecutive versions.
 
-What it gives: the writers of one server share a round trip, so a
+What it gives, measured on an eu-west-1 table (docs/benchmarks.md,
+"After the batched writes"): 11.1 to 28.4 binds per second at 8 members
+with 2.8 writes per transaction, 12.5 to 39.1 at 8 members and 10,000
+devices with 7 writes per transaction, and the same rate held for five
+minutes. The writers of one server share a round trip, so a
 server's throughput grows with its concurrency, up to 25 writes per
 transaction. What it does not give: two servers still race on the
 counter, and a server far from the table still waits two round trips
