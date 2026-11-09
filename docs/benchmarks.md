@@ -141,19 +141,21 @@ time. Each run lasted 20 seconds with 8 claims per member.
 resource sustained 11 to 15 binds per second from 2 to 32 members, and
 the errors at 8 and 32 members are `ThrottlingException: Throughput
 exceeds the current capacity of your table or index ... check if you
-have a hot key`. Every write of the resource goes to three items that
-share three partition keys: the counter, the object partition
-`obj#devices`, and the event partition. A partition sustains 1000 write
-units per second, a transaction costs two units per item, and an event
-item holds the object and its previous state, so one bind costs about
-15 to 30 write units across the three hot partitions. That puts the
-ceiling of the resource near 30 to 60 writes per second, which is what
-the rows show, with a new on-demand table still scaling up. ADR 0003
-assumed about 1000 writes per second per counter item; the partition,
-not the counter, is the limit, and it is an order of magnitude lower.
-Issue #241 measures the ceiling in a longer run, and the partition per
-member of ADR 0022, or a partition per shard of devices, is the way
-up.
+have a hot key`. Every write of the resource is one transaction on
+three items under three partition keys: the counter (85 bytes), the
+object (under 1 KB), and the event, which holds the object and its
+previous state (1.4 KB, measured on a local table). A transaction costs
+two write units per kilobyte of each item, so a bind or a release costs
+about 8 write units, 4 of them on the event partition. A partition
+sustains 1000 write units per second, so the event partition alone
+would allow about 250 binds and releases per second, and the counter
+item 500. The rows show a tenth of that, with the table new and
+DynamoDB reporting that it was still scaling the capacity of a hot key.
+The five minute row below shows where a table settles. ADR 0003
+assumed about 1000 writes per second per counter item; on a real table
+the hot partition keys, not the counter, set the ceiling, and the
+partition per member of ADR 0022 or a partition per shard of devices
+is the way up.
 
 The 10,000 device run on the table failed while it created the pool:
 16 parallel creates hit the same counter item, and the second attempt
