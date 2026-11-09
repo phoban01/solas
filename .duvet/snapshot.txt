@@ -145,6 +145,11 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!SHOULD,implementation]: milliseconds.
     TEXT[!SHOULD,implementation]: The server SHOULD run one poller for each resource and share it between
     TEXT[!SHOULD,implementation]: watchers.
+    TEXT[!MAY]: A watcher MAY ask for progress.
+    TEXT[!MUST,implementation,test]: When a watcher asks for progress, the server MUST poll before it sends
+    TEXT[!MUST,implementation,test]: the bookmark.
+    TEXT[!MUST,implementation,test]: A consistent list through the API server MUST come from the watch cache
+    TEXT[!MUST,implementation,test]: once the cache has reached the counter value.
 
   SECTION: [4.3. Gaps](#4-3-gaps)
     TEXT[!MUST,implementation,test]: If the query result does not hold each version from `last + 1` to `c`
@@ -688,3 +693,4 @@ SPECIFICATION: [Solas specification](spec/solas.md)
   SECTION: [16.2. Claims](#16-2-claims)
     TEXT[!MUST,implementation,test]: The controller MUST set a `Bound` claim to `Suspended` without a read of
     TEXT[!MUST,implementation,test]: the store, when its member is not live, section 6.5.
+    TEXT[!MUST,implementation,test]: The controller MUST bound each request to its API server to `D / 3`.

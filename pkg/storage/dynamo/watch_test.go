@@ -2,6 +2,7 @@ package dynamo
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -107,5 +108,48 @@ func TestWatchSkipsInitEvent(t *testing.T) {
 	createPods(t, s, "a")
 	if e := nextEvent(t, w); e.Type != watch.Added || e.Object.(*example.Pod).ResourceVersion != "2" {
 		t.Fatalf("first event = %v %v, want ADDED at version 2", e.Type, e.Object)
+	}
+}
+
+//= spec/solas.md#4-2-poll
+//= type=test
+//# When a watcher asks for progress, the server MUST poll before it sends
+//# the bookmark.
+
+// TestProgressRequestPollsFirst: a write lands, then the watch is asked
+// for progress. The bookmark that answers carries the version of that
+// write or a later one, because the poll runs before the bookmark.
+func TestProgressRequestPollsFirst(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	createPods(t, s, "a") // version 2
+	w, err := s.Watch(ctx, "/pods/", storage.ListOptions{ResourceVersion: "2", Recursive: true,
+		Predicate: storage.Everything, ProgressNotify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	for i := range 5 {
+		createPods(t, s, fmt.Sprintf("p%d", i)) // version 3 + i
+		written := uint64(3 + i)
+		if err := s.RequestWatchProgress(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var bookmark uint64
+		for bookmark == 0 {
+			e := nextEvent(t, w)
+			if e.Type != watch.Bookmark {
+				continue
+			}
+			rv, err := s.versioner.ObjectResourceVersion(e.Object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bookmark = rv
+		}
+		if bookmark < written {
+			t.Fatalf("bookmark after the progress request = %d, want at least %d: the watch sent it before it polled", bookmark, written)
+		}
 	}
 }

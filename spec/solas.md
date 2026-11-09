@@ -269,6 +269,20 @@ The server SHOULD run one poller for each resource and share it between
 watchers.
 The API server watch cache gives this sharing.
 
+A watcher MAY ask for progress.
+When a watcher asks for progress, the server MUST poll before it sends
+the bookmark.
+So the bookmark carries a version at or above the counter at the time of
+the request.
+A consistent list through the API server MUST come from the watch cache
+once the cache has reached the counter value.
+The API server library serves a consistent list from the cache only for
+a store that answers progress requests.
+The DynamoDB store declares that it does, and the cache reads the
+counter once, asks for progress, and serves the list from memory.
+A list that reaches the store reads the counter twice around a query,
+section 2.4, and it costs one read per object.
+
 ### 4.3. Gaps
 
 If the query result does not hold each version from `last + 1` to `c`
@@ -1131,6 +1145,9 @@ A claim that is created during an outage stays `Pending` until the store
 returns.
 Local claims live in the etcd of the cluster, so a user can create, read,
 and delete them during an outage.
+The controller MUST bound each request to its API server to `D / 3`.
+A request that waits for a store that does not answer then fails before
+the lease lapses, and the controller suspends the claims in time.
 A delete waits for the release of its device, section 6.4, until the
 store returns.
 

@@ -58,7 +58,11 @@ start_local_stores() {
     dir=$(mktemp -d)
     client=$(free_port)
     peer=$(free_port)
-    etcd --data-dir "$dir" --log-level error --unsafe-no-fsync \
+    # SOLAS_ETCD_FSYNC=1 keeps fsync on, for a benchmark of what it costs.
+    local fsync_flag=--unsafe-no-fsync
+    [ -n "${SOLAS_ETCD_FSYNC:-}" ] && fsync_flag=""
+    # shellcheck disable=SC2086
+    etcd --data-dir "$dir" --log-level error $fsync_flag \
       --listen-client-urls "http://127.0.0.1:$client" --advertise-client-urls "http://127.0.0.1:$client" \
       --listen-peer-urls "http://127.0.0.1:$peer" --initial-advertise-peer-urls "http://127.0.0.1:$peer" \
       --initial-cluster "default=http://127.0.0.1:$peer" >"$dir/log" 2>&1 &
