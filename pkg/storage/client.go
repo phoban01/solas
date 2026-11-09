@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -51,6 +53,15 @@ func DynamoClientWithAttempts(ctx context.Context, c Config, attempts int) (*dyn
 			opts.BaseEndpoint = aws.String(c.Endpoint)
 		}
 		opts.HTTPClient = awshttp.NewBuildableClient().WithTimeout(CallTimeout)
+		if attempts > CallAttempts {
+			// A tool that fills a throttled table retries often; the SDK's
+			// default retry quota would run out and fail every call at once.
+			opts.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+				so.MaxAttempts = attempts
+				so.RateLimiter = ratelimit.None
+			})
+			return
+		}
 		opts.RetryMaxAttempts = attempts
 	}), nil
 }

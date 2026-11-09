@@ -484,14 +484,19 @@ func run(ctx context.Context, o options) error {
 		store = "etcd"
 	}
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
+	tx, txWrites := dynamo.BatchStats()
+	perTx := "-"
+	if tx > 0 {
+		perTx = fmt.Sprintf("%.1f", float64(txWrites)/float64(tx))
+	}
 	cols := []string{"store", "members", "claims", "devices", "binds/s", "conflict%", "bind p50 ms", "bind p99 ms",
-		"list p50 ms", "list p99 ms", "sync ms", "lag p50 ms", "lag p99 ms", "reads/member/s", "errors"}
+		"list p50 ms", "list p99 ms", "sync ms", "lag p50 ms", "lag p99 ms", "reads/member/s", "writes/tx", "errors"}
 	row := []string{store, fmt.Sprint(o.members), fmt.Sprint(o.claims), fmt.Sprint(o.devices),
 		fmt.Sprintf("%.1f", float64(binds)/elapsed.Seconds()), fmt.Sprintf("%.1f", conflictRate),
 		ms(percentile(st.bindLatency, 0.5)), ms(percentile(st.bindLatency, 0.99)),
 		ms(percentile(st.listLatency, 0.5)), ms(percentile(st.listLatency, 0.99)), ms(st.sync),
 		ms(percentile(st.watchLag, 0.5)), ms(percentile(st.watchLag, 0.99)),
-		reads, fmt.Sprint(st.errors.Load())}
+		reads, perTx, fmt.Sprint(st.errors.Load())}
 	if o.header {
 		fmt.Println(strings.Join(cols, "\t"))
 	}

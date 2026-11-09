@@ -24,7 +24,7 @@ if [ -n "${SOLAS_DYNAMODB_URL:-}" ]; then
   export SOLAS_DYNAMODB_ENDPOINT=none
   eval "$(scripts/aws-bench.sh env)"
   region=$(echo "$SOLAS_DYNAMODB_URL" | sed -n 's/.*region=\([a-z0-9-]*\).*/\1/p')
-  rtt=$(curl -s -o /dev/null -w '%{time_connect}' "https://dynamodb.$region.amazonaws.com/")
+  rtt=$(curl -s -o /dev/null -w '%{time_connect}' "https://dynamodb.$region.amazonaws.com/" || echo unknown)
   echo "scale: DynamoDB in $region, TCP connect ${rtt}s from this host" >&2
 fi
 start_local_stores scale >&2

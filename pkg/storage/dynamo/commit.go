@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -161,6 +162,10 @@ func (s *store) commitBatch(batch []*pending) {
 		//# The writes of a call MUST get the versions `n + 1` to `n + k`, in the
 		//# order of the call.
 		_, err = s.client.TransactWriteItems(ctx, s.transaction(batch, n))
+		if err == nil {
+			batchStats.transactions.Add(1)
+			batchStats.writes.Add(int64(len(batch)))
+		}
 		if err == nil {
 			for i, p := range batch {
 				p.done <- result{rv: n + 1 + uint64(i)}
@@ -503,4 +508,14 @@ func binAttr(item map[string]types.AttributeValue, name string) []byte {
 		return b.Value
 	}
 	return nil
+}
+
+// batchStats counts the transactions and the writes they carried, for
+// the benchmark's writes per transaction column.
+var batchStats struct{ transactions, writes atomic.Int64 }
+
+// BatchStats returns how many transactions the stores of this process
+// committed and how many writes they carried.
+func BatchStats() (transactions, writes int64) {
+	return batchStats.transactions.Load(), batchStats.writes.Load()
 }
