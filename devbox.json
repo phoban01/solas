@@ -31,6 +31,7 @@
   "shell": {
     "scripts": {
       "test": "scripts/test.sh",
+      "scale": "scripts/scale.sh",
       "sim-gate": "scripts/sim-gate.sh",
       "e2e": "scripts/e2e.sh",
       "smoke": "scripts/smoke.sh",
