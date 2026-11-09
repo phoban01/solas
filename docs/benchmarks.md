@@ -307,10 +307,22 @@ rejected use had a token below the highest accepted.
 |------|--------|-------|---------:|--------|----------:|---------|-----------:|------------|
 | 2026-11-09 | 35359f4 | dynamodb-local | 30 min, seed 1 | 13 store pauses of 15 to 35 s, 26 node pauses of 12 to 30 s, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 87 Lost claims created again | 226 events, 108 binds, 102 releases | 0 | 1471 uses accepted, 81 rejected, every rejection for a token below the highest accepted; highest token 19 |
 | 2026-11-09 | 58342bc | dynamodb-local, through the gatekeeper | 30 min, seed 1 | 13 store pauses, 26 node pauses, 17 Pod deletes, 15 claims created and deleted | 28 member UID changes, 86 Lost claims created again | 224 events, 107 binds, 101 releases | 0 | 1309 uses accepted, 81 rejected, every rejection for a stale token; 1093 actuator calls accepted through `solas gatekeeper`, each from the holder of the token at the time |
+| 2026-11-09 | fd95ab6 | etcd, through the gatekeeper | 30 min, seed 1 | 13 store pauses, 26 node pauses, 17 Pod deletes, 15 claims created and deleted | 25 member UID changes, 79 Lost claims created again | 193 events, 91 binds, 94 releases | 0 | 1281 uses accepted, 87 rejected, every rejection for a stale token; 1081 actuator calls accepted, each from the holder of the token at the time |
+| 2026-11-09 | dcbdf8e | dynamodb-local, through the gatekeeper, SOAK_LOAD=8 | 30 min, seed 1 | 12 store pauses, 25 node pauses, 15 Pod deletes, 15 claims created and deleted; solas-bench ran 8 more members with 4 claims each | 28 member UID changes, 71 Lost claims created again | 306,985 events, 153,455 binds, 153,456 releases, 32 deletes | 0 | 1243 uses accepted, 34 rejected, every rejection for a stale token; 966 actuator calls accepted, each from the holder of the token at the time |
 
 The second row runs the H100 behind `solas gatekeeper` and the demo
 actuator, spec 17. The verifier checks each call the actuator accepted
 against the holder of the token in the replayed history.
+
+The third row is the soak on etcd; it needs the live follower of
+`pkg/audit`, because the apiserver library compacts etcd every five
+minutes. The fourth row is the soak under load: `SOAK_LOAD=8` ran
+`solas-bench` as eight more members against the same store, each with
+a Member that renews, so the replay audited 306,985 events instead of a
+few hundred, with the same faults and the same result. The follower
+started its watch again ten times, once per store pause, and lost
+nothing. The bench's own row from inside the soak: 85 binds per second
+at 8 members with 917 errors, the errors being the twelve store pauses.
 
 The replay covered the whole run: the event retention of the DynamoDB
 store is one hour, and the run took 31 minutes. The 81 rejections are
