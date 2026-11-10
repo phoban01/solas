@@ -40,6 +40,7 @@ import (
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/apiserver"
 	"github.com/phoban01/solas/pkg/registry/solas/device"
+	memberregistry "github.com/phoban01/solas/pkg/registry/solas/member"
 	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
 )
@@ -53,6 +54,12 @@ type options struct {
 	devices    int
 	duration   time.Duration
 	header     bool
+	// memberLease, when set, gives each simulated member a Member object.
+	memberLease time.Duration
+	// maxUnits stops a run whose DynamoDB request units pass it.
+	maxUnits int64
+	// pollInterval is the watch poll interval of the DynamoDB store.
+	pollInterval time.Duration
 }
 
 func main() {
@@ -65,6 +72,9 @@ func main() {
 	fs.IntVar(&o.devices, "devices", 0, "devices in the pool; 0 means members * claims")
 	fs.DurationVar(&o.duration, "duration", 10*time.Second, "how long the claims run")
 	fs.BoolVar(&o.header, "header", true, "print the header row")
+	fs.DurationVar(&o.pollInterval, "poll-interval", dynamo.DefaultPollInterval, "how often a watch polls the event log of the DynamoDB store, spec 4.2")
+	fs.Int64Var(&o.maxUnits, "max-units", 10_000_000, "stop the run when its DynamoDB request units (calls counted by the tool) pass this; a cost guard on a real table")
+	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")
 	_ = fs.Parse(os.Args[1:])
 	if o.storageURL == "" {
 		fmt.Fprintln(os.Stderr, "solas-bench: --storage-url is required")
@@ -80,6 +90,9 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// benchAttempts is how many attempts each DynamoDB call of the bench makes.
+const benchAttempts = 8
 
 // counting counts the calls to DynamoDB, so the tool can report reads per
 // member. GetItem and Query are reads; TransactWriteItems is a write.
@@ -118,7 +131,9 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 		g.EtcdServers = sc.Endpoints
 		return g, nil, nil
 	}
-	client, err := storageurl.DynamoClient(ctx, sc)
+	// A real table throttles a hot partition and tells the client to try
+	// again; the bench gives each call more attempts than the server does.
+	client, err := storageurl.DynamoClientWithAttempts(ctx, sc, benchAttempts)
 	if err != nil {
 		return g, nil, err
 	}
@@ -128,7 +143,7 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 		}
 	}
 	c := &counting{API: client}
-	g.Dynamo = dynamo.Config{Client: c, Table: sc.Table, EventRetention: dynamo.DefaultEventRetention, PollInterval: dynamo.DefaultPollInterval}
+	g.Dynamo = dynamo.Config{Client: c, Table: sc.Table, EventRetention: dynamo.DefaultEventRetention, PollInterval: o.pollInterval}
 	return g, c, nil
 }
 
@@ -143,17 +158,94 @@ type member struct {
 	rest    *device.REST
 	status  *device.StatusREST
 	destroy func()
+	// members and memberStatus are set when the member has a Member.
+	members      *memberregistry.REST
+	memberStatus *memberregistry.StatusREST
+	lease        time.Duration
+	memberRV     string
 }
 
-func newMember(g apiserver.RESTOptionsGetter, i int) (*member, error) {
+func newMember(g apiserver.RESTOptionsGetter, i int, lease time.Duration) (*member, error) {
 	r, s, err := device.NewREST(apiserver.Scheme, g)
 	if err != nil {
 		return nil, err
 	}
-	return &member{
-		name: fmt.Sprintf("m%02d", i), uid: types.UID(fmt.Sprintf("member-uid-%02d", i)),
-		rest: r, status: s, destroy: r.Store.DestroyFunc,
-	}, nil
+	m := &member{
+		name: fmt.Sprintf("bench-m%02d", i), uid: types.UID(fmt.Sprintf("bench-member-uid-%02d", i)),
+		rest: r, status: s, destroy: r.Store.DestroyFunc, lease: lease,
+	}
+	if lease > 0 {
+		mr, ms, err := memberregistry.NewREST(apiserver.Scheme, g)
+		if err != nil {
+			r.Store.DestroyFunc()
+			return nil, err
+		}
+		m.members, m.memberStatus = mr, ms
+		m.destroy = func() {
+			r.Store.DestroyFunc()
+			mr.Store.DestroyFunc()
+		}
+	}
+	return m, nil
+}
+
+// join creates the Member of a simulated member, as a member cluster
+// does before it binds, spec 7.2, so the sweepers of real clusters on
+// the same store treat its devices as held. It takes the real UID.
+func (m *member) join(ctx context.Context) error {
+	if m.lease == 0 {
+		return nil
+	}
+	now := metav1.NewMicroTime(time.Now())
+	obj, err := m.members.Create(reqCtx(ctx), &solas.Member{
+		ObjectMeta: metav1.ObjectMeta{Name: m.name},
+		Spec:       solas.MemberSpec{LeaseDurationSeconds: int32(m.lease / time.Second)},
+		Status:     solas.MemberStatus{Phase: solas.MemberActive, RenewTime: &now},
+	}, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("join %s: %w", m.name, err)
+	}
+	mem := obj.(*solas.Member)
+	m.uid, m.memberRV = mem.UID, mem.ResourceVersion
+	return nil
+}
+
+// renew renews the Member every lease / 3 until stop closes, spec 7.3.
+func (m *member) renew(ctx context.Context, stop <-chan struct{}, st *stats) {
+	if m.lease == 0 {
+		return
+	}
+	t := time.NewTicker(m.lease / 3)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+		}
+		obj, err := m.members.Get(reqCtx(ctx), m.name, &metav1.GetOptions{})
+		if err != nil {
+			st.fail(ctx, fmt.Errorf("renew %s: %w", m.name, err))
+			continue
+		}
+		mem := obj.(*solas.Member).DeepCopy()
+		now := metav1.NewMicroTime(time.Now())
+		mem.Status.RenewTime = &now
+		if _, _, err := m.memberStatus.Update(reqCtx(ctx), m.name, rest.DefaultUpdatedObjectInfo(mem),
+			rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{}); err != nil {
+			st.fail(ctx, fmt.Errorf("renew %s: %w", m.name, err))
+		}
+	}
+}
+
+// leave deletes the Member at the end of the run.
+func (m *member) leave(ctx context.Context) {
+	if m.lease == 0 {
+		return
+	}
+	if _, _, err := m.members.Delete(reqCtx(ctx), m.name, rest.ValidateAllObjectFunc, &metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		fmt.Fprintf(os.Stderr, "solas-bench: leave %s: %v\n", m.name, err)
+	}
 }
 
 // list returns the devices from a consistent list, as the controller
@@ -255,7 +347,7 @@ func run(ctx context.Context, o options) error {
 	}()
 	// The first member prepares the pool. The others start once the pool
 	// exists, so their first list measures a sync of the whole pool.
-	admin, err := newMember(g, 0)
+	admin, err := newMember(g, 0, o.memberLease)
 	if err != nil {
 		return err
 	}
@@ -273,7 +365,7 @@ func run(ctx context.Context, o options) error {
 	var st stats
 	for i := 1; i < o.members; i++ {
 		from := time.Now()
-		m, err := newMember(g, i)
+		m, err := newMember(g, i, o.memberLease)
 		if err != nil {
 			return err
 		}
@@ -286,6 +378,18 @@ func run(ctx context.Context, o options) error {
 	if _, _, err := waitList(ctx, admin, o.devices); err != nil {
 		return err
 	}
+	// With a lease, each member joins as a Member before it binds, spec
+	// 7.2, and leaves at the end.
+	for _, m := range members {
+		if err := m.join(ctx); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		for _, m := range members {
+			m.leave(context.Background())
+		}
+	}()
 
 	// The workers stop between two requests when stop closes, so no
 	// request is cut off in flight at the end of the run. The timer
@@ -303,6 +407,11 @@ func run(ctx context.Context, o options) error {
 	var wg sync.WaitGroup
 	begin := make(chan struct{})
 	for _, m := range members {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.renew(ctx, stop, &st)
+		}()
 		_, rv, err := m.list(ctx)
 		if err != nil {
 			return err
@@ -329,6 +438,25 @@ func run(ctx context.Context, o options) error {
 	var readsBefore, writesBefore int64
 	if counter != nil {
 		readsBefore, writesBefore = counter.reads.Load(), counter.writes.Load()
+		// The cost guard: a run on a real table stops when its request
+		// units pass --max-units, so a mistake stays small.
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+				}
+				used := counter.reads.Load() - readsBefore + counter.writes.Load() - writesBefore
+				if overBudget(used, o.maxUnits) {
+					fmt.Fprintf(os.Stderr, "solas-bench: stopped: %d request units passed --max-units %d\n", used, o.maxUnits)
+					end()
+					return
+				}
+			}
+		}()
 	}
 	// Every watch runs; now the claims start together, and the clock.
 	close(begin)
@@ -345,7 +473,6 @@ func run(ctx context.Context, o options) error {
 	if counter != nil {
 		perMember := float64(counter.reads.Load()-readsBefore) / float64(o.members) / elapsed.Seconds()
 		reads = fmt.Sprintf("%.1f", perMember)
-		_ = writesBefore
 	}
 	binds, conflicts := st.binds.Load(), st.conflicts.Load()
 	conflictRate := 0.0
@@ -357,14 +484,19 @@ func run(ctx context.Context, o options) error {
 		store = "etcd"
 	}
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
+	tx, txWrites := dynamo.BatchStats()
+	perTx := "-"
+	if tx > 0 {
+		perTx = fmt.Sprintf("%.1f", float64(txWrites)/float64(tx))
+	}
 	cols := []string{"store", "members", "claims", "devices", "binds/s", "conflict%", "bind p50 ms", "bind p99 ms",
-		"list p50 ms", "list p99 ms", "sync ms", "lag p50 ms", "lag p99 ms", "reads/member/s", "errors"}
+		"list p50 ms", "list p99 ms", "sync ms", "lag p50 ms", "lag p99 ms", "reads/member/s", "writes/tx", "errors"}
 	row := []string{store, fmt.Sprint(o.members), fmt.Sprint(o.claims), fmt.Sprint(o.devices),
 		fmt.Sprintf("%.1f", float64(binds)/elapsed.Seconds()), fmt.Sprintf("%.1f", conflictRate),
 		ms(percentile(st.bindLatency, 0.5)), ms(percentile(st.bindLatency, 0.99)),
 		ms(percentile(st.listLatency, 0.5)), ms(percentile(st.listLatency, 0.99)), ms(st.sync),
 		ms(percentile(st.watchLag, 0.5)), ms(percentile(st.watchLag, 0.99)),
-		reads, fmt.Sprint(st.errors.Load())}
+		reads, perTx, fmt.Sprint(st.errors.Load())}
 	if o.header {
 		fmt.Println(strings.Join(cols, "\t"))
 	}
@@ -378,12 +510,12 @@ func waitList(ctx context.Context, m *member, want int) ([]solas.Device, string,
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		devices, rv, err := m.list(ctx)
-		if err == nil && len(devices) == want {
+		if err == nil && benchDevices(devices) == want {
 			return devices, rv, nil
 		}
 		if time.Now().After(deadline) {
 			if err == nil {
-				err = fmt.Errorf("list has %d devices, want %d", len(devices), want)
+				err = fmt.Errorf("list has %d bench devices, want %d", benchDevices(devices), want)
 			}
 			return nil, "", fmt.Errorf("%s: %w", m.name, err)
 		}
@@ -402,8 +534,17 @@ func reset(ctx context.Context, m *member, want int) error {
 	if err != nil {
 		return err
 	}
+	// Only the bench's own devices: a shared store has others.
+	var own []*solas.Device
 	for i := range devices {
-		d := &devices[i]
+		if devices[i].Spec.Attributes["bench"] == "true" {
+			own = append(own, &devices[i])
+		}
+	}
+	// Sixteen at a time: on a real table each call is a round trip, and a
+	// pool of 10,000 devices would take minutes one by one.
+	err = each(ctx, len(own), func(i int) error {
+		d := own[i]
 		if d.Status.ClaimRef != nil {
 			if _, err := m.writeRef(ctx, d, nil); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("release %s: %w", d.Name, err)
@@ -412,14 +553,69 @@ func reset(ctx context.Context, m *member, want int) error {
 		if _, _, err := m.rest.Delete(reqCtx(ctx), d.Name, rest.ValidateAllObjectFunc, &metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete %s: %w", d.Name, err)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	for i := range want {
+	return each(ctx, want, func(i int) error {
 		d := &solas.Device{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("bench-%04d", i), Labels: map[string]string{"bench": "true"}}}
+		d.Spec.Attributes = map[string]string{"bench": "true"}
 		if _, err := m.rest.Create(reqCtx(ctx), d, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create %s: %w", d.Name, err)
 		}
+		return nil
+	})
+}
+
+// each runs f for 0 to n-1 with sixteen workers and returns the first
+// error.
+func each(ctx context.Context, n int, f func(i int) error) error {
+	const workers = 16
+	var wg sync.WaitGroup
+	idx := make(chan int)
+	var firstErr error
+	var mu sync.Mutex
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idx {
+				// A real table throttles a hot partition; try again with
+				// a growing pause before giving up on an item.
+				var err error
+				for attempt := range 6 {
+					if err = f(i); err == nil || ctx.Err() != nil {
+						break
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(time.Duration(50<<attempt) * time.Millisecond):
+					}
+				}
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+				}
+			}
+		}()
 	}
-	return nil
+	for i := 0; i < n; i++ {
+		select {
+		case <-ctx.Done():
+			i = n
+		case idx <- i:
+		}
+	}
+	close(idx)
+	wg.Wait()
+	if firstErr == nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return firstErr
 }
 
 // waitListAny lists the devices until the cache answers.
@@ -479,7 +675,7 @@ func claimLoop(ctx context.Context, stop <-chan struct{}, m *member, claim int, 
 		st.listed(time.Since(from))
 		var free []*solas.Device
 		for i := range devices {
-			if devices[i].Status.ClaimRef == nil {
+			if devices[i].Status.ClaimRef == nil && devices[i].Spec.Attributes["bench"] == "true" {
 				free = append(free, &devices[i])
 			}
 		}
@@ -532,4 +728,20 @@ func (s *stats) fail(ctx context.Context, err error) {
 	if n := s.errors.Load(); n <= 5 {
 		fmt.Fprintln(os.Stderr, "solas-bench:", err)
 	}
+}
+
+// overBudget reports whether used request units passed the limit. A
+// limit of 0 or less means no limit.
+func overBudget(used, limit int64) bool { return limit > 0 && used > limit }
+
+// benchDevices counts the devices of the bench in a list; a shared store
+// has the devices of real clusters too.
+func benchDevices(devices []solas.Device) int {
+	n := 0
+	for i := range devices {
+		if devices[i].Spec.Attributes["bench"] == "true" {
+			n++
+		}
+	}
+	return n
 }

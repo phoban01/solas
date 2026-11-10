@@ -3,11 +3,13 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +67,43 @@ type soak struct {
 	lastUID     map[string]string
 	skipped     int
 	start       time.Time
+	// loadRow is the row that solas-bench printed, when SOAK_LOAD ran it.
+	loadRow string
+	// replay follows the Device history of the store through the run.
+	replay *audit.Replay
+}
+
+// startLoad starts solas-bench against the same store for the length of
+// the faults, when SOAK_LOAD names a number of simulated members and the
+// soak script set SOAK_BENCH. Each bench member joins with a Member and
+// renews it, so the clusters' sweepers treat its devices as held, and the
+// bench binds only its own devices. The replay then audits the bench's
+// events with the clusters'. The returned function waits for the bench
+// and returns its row.
+func (s *soak) startLoad(ctx context.Context, duration time.Duration) func() string {
+	members := envInt("SOAK_LOAD", 0)
+	bench := os.Getenv("SOAK_BENCH")
+	if members == 0 || bench == "" {
+		return func() string { return "" }
+	}
+	url := strings.TrimSpace(run(s.t, "", root+"/demo/k3d/mesh.sh", "url", s.store))
+	cmd := exec.CommandContext(ctx, bench, "--storage-url", url, "--storage-prefix", "/registry",
+		"--members", fmt.Sprint(members), "--claims", "4", "--duration", duration.String(),
+		"--member-lease", "10s", "--header=false")
+	cmd.Dir = root
+	var out, errs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errs
+	if err := cmd.Start(); err != nil {
+		s.t.Fatalf("start solas-bench: %v", err)
+	}
+	s.logf("solas-bench runs %d members against %s for %s", members, s.store, duration)
+	return func() string {
+		if err := cmd.Wait(); err != nil {
+			s.logf("solas-bench: %v\n%s", err, errs.String())
+		}
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		return lines[len(lines)-1]
+	}
 }
 
 func (s *soak) logf(format string, args ...any) {
@@ -109,7 +148,9 @@ func TestSoak(t *testing.T) {
 	})
 
 	s.setup(ctx)
+	stopFollow := s.follow(ctx)
 	s.logf("soak: %s for %s, seed %d", store, duration, seed)
+	load := s.startLoad(ctx, duration)
 	deadline := time.Now().Add(duration)
 	for time.Now().Before(deadline) {
 		s.housekeeping(ctx)
@@ -120,6 +161,8 @@ func TestSoak(t *testing.T) {
 	for _, c := range []string{s.container, "k3d-e2e-a-server-0", "k3d-e2e-b-server-0"} {
 		_, _ = runQuiet("docker", "unpause", c)
 	}
+	s.loadRow = load()
+	stopFollow()
 	eventually(t, 240*time.Second, "no claim Suspended and no claim Pending that a free device could serve", func(ctx context.Context) bool {
 		s.housekeeping(ctx)
 		for _, c := range s.clients {
@@ -260,7 +303,7 @@ func (s *soak) fault() {
 		d := s.between(5*time.Second, 15*time.Second)
 		s.faults["claim churn"]++
 		s.logf("create %s in %s for any free device, delete it after %s", name, cluster, d.Round(time.Second))
-		claim := fmt.Sprintf("apiVersion: claims.solas.dev/v1alpha1\nkind: DeviceClaim\nmetadata:\n  name: %s\n  namespace: work\nspec:\n  selector:\n    cel: \"true\"\n", name)
+		claim := fmt.Sprintf("apiVersion: claims.solas.dev/v1alpha1\nkind: DeviceClaim\nmetadata:\n  name: %s\n  namespace: work\nspec:\n  selector:\n    cel: \"!has(device.spec.attributes.bench)\"\n", name)
 		if _, err := execCommandStdin(claim, "kubectl", "--kubeconfig", kubeconfig(cluster), "--request-timeout=10s", "apply", "-f", "-"); err != nil {
 			s.skipped++
 			return
@@ -277,23 +320,39 @@ func (s *soak) fault() {
 	}
 }
 
-// verify replays the Device history of the store and reads the
-// gatekeeper log, then prints the summary of the run.
-func (s *soak) verify(ctx context.Context) {
+// follow starts the audit replay on the store's history and keeps it
+// following through the run, so compaction on etcd and the event
+// retention on DynamoDB lose nothing. It returns the function that
+// stops the follower; verify reads the summary after that.
+func (s *soak) follow(ctx context.Context) func() {
 	t := s.t
 	url := strings.TrimSpace(run(t, "", root+"/demo/k3d/mesh.sh", "url", s.store))
 	st, err := migrate.Open(ctx, url, "/registry")
 	if err != nil {
 		t.Fatalf("open the store: %v", err)
 	}
-	defer st.Close()
-	replay := audit.New()
-	rctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	if err := replay.ReadStore(rctx, st.Devices, "/solas.dev/devices"); err != nil {
-		t.Fatalf("replay the device history: %v", err)
+	s.replay = audit.New()
+	fctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- s.replay.Follow(fctx, st.Devices, "/solas.dev/devices") }()
+	eventually(t, 30*time.Second, "the audit follower has the current state", func(context.Context) bool {
+		return s.replay.Snapshot().Events > 0
+	})
+	return func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("the audit follower stopped: %v", err)
+		}
+		st.Close()
 	}
-	for _, v := range replay.Violations {
+}
+
+// verify checks the followed history, reads the gatekeeper and the
+// actuator logs, and prints the summary of the run.
+func (s *soak) verify(ctx context.Context) {
+	t := s.t
+	replay := s.replay
+	for _, v := range replay.Snapshot().Violations {
 		t.Errorf("history: %s", v)
 	}
 
@@ -367,9 +426,16 @@ func (s *soak) verify(ctx context.Context) {
 	t.Logf("soak summary (%s, %s):", s.store, time.Since(s.start).Round(time.Second))
 	t.Logf("  faults: %s; %d fault steps skipped because a paused cluster did not answer", strings.Join(faults, ", "), s.skipped)
 	t.Logf("  takeovers: %d member UID changes, %d Lost claims deleted and created again", s.uidChanges, s.lostDeleted)
+	sum := replay.Snapshot()
 	t.Logf("  history: %d events, %d binds, %d releases, %d binds against an offer, %d recoveries, %d deletes, %d violations",
-		replay.Events, replay.Binds, replay.Releases, replay.OfferBinds, replay.Recoveries, replay.Deletes, len(replay.Violations))
+		sum.Events, sum.Binds, sum.Releases, sum.OfferBinds, sum.Recoveries, sum.Deletes, len(sum.Violations))
+	if sum.Restarts > 0 {
+		t.Logf("  the follower started its watch again %d times, while the store did not answer", sum.Restarts)
+	}
 	t.Logf("  actuator: %d calls accepted through the gatekeeper, each from the holder of the token at the time", len(calls))
+	if s.loadRow != "" {
+		t.Logf("  load: solas-bench row (store members claims devices binds/s conflict%% bind p50 p99 list p50 p99 sync lag p50 p99 reads errors):\n    %s", s.loadRow)
+	}
 	t.Logf("  gatekeeper: %d uses accepted, %d rejected, all %d rejections for a token below the highest accepted (%d)",
 		accepted, rejected, lateRejects, highest)
 }

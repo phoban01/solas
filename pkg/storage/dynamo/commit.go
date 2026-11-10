@@ -10,6 +10,8 @@ import (
 	mrand "math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -47,46 +49,163 @@ var errObjectConflict = errors.New("dynamo: object condition failed")
 // maxCounterRetries bounds the retries after a counter conflict.
 const maxCounterRetries = 200
 
-// commit applies one write in one transaction and returns its resource
-// version.
+// maxBatch is the most writes one transaction carries. A transaction
+// holds up to 100 items, and each write takes two, plus the counter.
+const maxBatch = 25
+
+// pending is a write that waits for the committer.
+type pending struct {
+	w    write
+	done chan result
+}
+
+type result struct {
+	rv  uint64
+	err error
+}
+
+// batcher collects the writes of this server to one resource, so that
+// the committer can carry them in one transaction, spec 2.3. The first
+// writer that finds no committer running becomes it, and it runs until
+// the queue is empty.
+type batcher struct {
+	mu      sync.Mutex
+	queue   []*pending
+	running bool
+}
+
+//= spec/solas.md#2-3-writes
+//# A call MAY carry several writes of one resource that arrived at the
+//# server together.
+
+// commit queues one write and waits for its resource version. The
+// committer applies it with the other writes that arrived meanwhile, in
+// one transaction.
 func (s *store) commit(ctx context.Context, w write) (uint64, error) {
-	for attempt := 0; ; attempt++ {
+	p := &pending{w: w, done: make(chan result, 1)}
+	s.batch.mu.Lock()
+	s.batch.queue = append(s.batch.queue, p)
+	lead := !s.batch.running
+	if lead {
+		s.batch.running = true
+	}
+	s.batch.mu.Unlock()
+	if lead {
+		// The committer outlives this request: a write that the caller
+		// gives up on may still commit, as a call in flight may today.
+		go s.runBatches()
+	}
+	select {
+	case r := <-p.done:
+		return r.rv, r.err
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+// take returns the next batch of pending writes, or nil and clears the
+// running flag when the queue is empty.
+func (s *store) take() []*pending {
+	s.batch.mu.Lock()
+	defer s.batch.mu.Unlock()
+	if len(s.batch.queue) == 0 {
+		s.batch.running = false
+		return nil
+	}
+	n := min(len(s.batch.queue), maxBatch)
+	batch := s.batch.queue[:n:n]
+	s.batch.queue = s.batch.queue[n:]
+	return batch
+}
+
+// runBatches commits batches until the queue is empty.
+func (s *store) runBatches() {
+	for batch := s.take(); batch != nil; batch = s.take() {
+		s.commitBatch(batch)
+	}
+}
+
+// commitTimeout bounds one batch, with its retries. The callers have
+// their own contexts; the committer serves them all.
+const commitTimeout = 2 * time.Minute
+
+// commitBatch applies the writes of a batch in one transaction and
+// answers each one. A write whose object condition fails leaves the
+// batch with a conflict, and the rest try again.
+func (s *store) commitBatch(batch []*pending) {
+	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
+	defer cancel()
+	fail := func(err error) {
+		for _, p := range batch {
+			p.done <- result{err: err}
+		}
+	}
+	for attempt := 0; len(batch) > 0; attempt++ {
 		n, sealed, err := s.readCounterSealed(ctx)
 		if err != nil {
-			return 0, err
+			fail(err)
+			return
 		}
 		//= spec/solas.md#12-1-seal
 		//# A sealed store MUST reject every write.
 		if sealed {
-			return 0, errSealed(s.resource)
+			fail(errSealed(s.resource))
+			return
 		}
-
 		//= spec/solas.md#3-1-issue
 		//# Each write MUST get a resource version exactly one more than the
 		//# previous write to the same resource.
-
 		//= spec/solas.md#3-2-order
 		//# The resource version of a resource MUST strictly increase in commit
 		//# order.
-		next := n + 1
-		_, err = s.client.TransactWriteItems(ctx, s.transaction(w, n, next))
+		//= spec/solas.md#2-3-writes
+		//# The writes of a call MUST get the versions `n + 1` to `n + k`, in the
+		//# order of the call.
+		_, err = s.client.TransactWriteItems(ctx, s.transaction(batch, n))
 		if err == nil {
-			return next, nil
+			batchStats.transactions.Add(1)
+			batchStats.writes.Add(int64(len(batch)))
 		}
-		switch conflict, retry := classify(err); {
-		case conflict:
-			return 0, errObjectConflict
-		case retry && attempt < maxCounterRetries:
+		if err == nil {
+			for i, p := range batch {
+				p.done <- result{rv: n + 1 + uint64(i)}
+			}
+			return
+		}
+		conflicts, retry := classify(err, len(batch))
+		if len(conflicts) > 0 {
+			//= spec/solas.md#2-3-writes
+			//# The other writes of the call MUST retry in a new call.
+			rest := batch[:0:0]
+			for i, p := range batch {
+				if conflicts[i] {
+					p.done <- result{err: errObjectConflict}
+				} else {
+					rest = append(rest, p)
+				}
+			}
+			batch = rest
+			continue
+		}
+		if retry && attempt < maxCounterRetries {
 			//= spec/solas.md#2-3-writes
 			//# If the transaction fails only on the counter condition, the server MUST
-			//# read the counter again and retry the same write.
-
+			//# read the counter again and retry the same writes.
 			//= spec/solas.md#2-3-writes
 			//# The server SHOULD wait a short random time before each such retry.
 			if err := sleepJitter(ctx, attempt); err != nil {
-				return 0, err
+				fail(err)
+				return
 			}
 			continue
+		}
+		if len(batch) > 1 {
+			// The error does not name a write. Each one goes alone, so the
+			// write at fault gets its error and the others go through.
+			for _, p := range batch {
+				s.commitBatch([]*pending{p})
+			}
+			return
 		}
 		//= spec/solas.md#2-3-writes
 		//# The server MUST reject a write whose event item would exceed the
@@ -94,29 +213,36 @@ func (s *store) commit(ctx context.Context, w write) (uint64, error) {
 		if isItemTooLarge(err) {
 			//= spec/solas.md#2-3-writes
 			//# The server MUST return `413 RequestEntityTooLarge` for such a write.
-			return 0, apierrors.NewRequestEntityTooLargeError(err.Error())
+			fail(apierrors.NewRequestEntityTooLargeError(err.Error()))
+			return
 		}
-		return 0, err
+		fail(err)
+		return
 	}
 }
 
-// transaction builds the three actions of a write, spec 2.3.
-func (s *store) transaction(w write, n, next uint64) *dynamodb.TransactWriteItemsInput {
+// transaction builds the actions of a batch, spec 2.3: the counter
+// update, then an object action and an event put for each write.
+func (s *store) transaction(batch []*pending, n uint64) *dynamodb.TransactWriteItemsInput {
 	//= spec/solas.md#2-3-writes
-	//# Every write MUST be one `TransactWriteItems` call.
-
+	//# Every write MUST be part of one `TransactWriteItems` call.
 	//= spec/solas.md#2-3-writes
-	//# The call MUST hold three actions: a counter update, an object action, and
-	//# an event put.
+	//# A call MUST hold one counter update and, for each write that it
+	//# carries, an object action and an event put.
+	//= spec/solas.md#2-3-writes
+	//# The counter update MUST set `n` to `n + k` on condition that `n` still
+	//# has the value that the server read.
+	items := make([]types.TransactWriteItem, 0, 1+2*len(batch))
+	items = append(items, s.counterAction(n, n+uint64(len(batch))))
+	for i, p := range batch {
+		next := n + 1 + uint64(i)
+		items = append(items, s.objectAction(p.w, next), s.eventAction(p.w, next))
+	}
 	return &dynamodb.TransactWriteItemsInput{
 		//= spec/solas.md#2-3-writes
 		//# Each call MUST set a `ClientRequestToken`.
 		ClientRequestToken: aws.String(newToken()),
-		TransactItems: []types.TransactWriteItem{
-			s.counterAction(n, next),
-			s.objectAction(w, next),
-			s.eventAction(w, next),
-		},
+		TransactItems:      items,
 	}
 }
 
@@ -124,7 +250,7 @@ func (s *store) counterAction(n, next uint64) types.TransactWriteItem {
 	pk, sk := s.counterKey()
 	key := map[string]types.AttributeValue{attrPK: str(pk), attrSK: str(sk)}
 	//= spec/solas.md#2-3-writes
-	//# The counter update MUST set `n` to `n + 1` on condition that `n` still
+	//# The counter update MUST set `n` to `n + k` on condition that `n` still
 	//# has the value that the server read.
 
 	//= spec/solas.md#12-1-seal
@@ -291,13 +417,16 @@ func (s *store) initCounter(ctx context.Context) error {
 	return nil
 }
 
-// classify reads the cancellation reasons of a failed transaction. The
-// reasons are in the order of the actions: counter, object, event.
-func classify(err error) (conflict, retry bool) {
+// classify reads the cancellation reasons of a failed transaction of k
+// writes. The reasons are in the order of the actions: the counter, then
+// the object and the event of each write. It returns, for each write,
+// whether its object condition failed, and whether the whole batch should
+// try again: a counter condition that failed, or a transaction conflict.
+func classify(err error, k int) (conflicts []bool, retry bool) {
 	var tce *types.TransactionCanceledException
 	if !errors.As(err, &tce) {
 		var tcx *types.TransactionConflictException
-		return false, errors.As(err, &tcx)
+		return nil, errors.As(err, &tcx)
 	}
 	code := func(i int) string {
 		if i < len(tce.CancellationReasons) {
@@ -305,16 +434,23 @@ func classify(err error) (conflict, retry bool) {
 		}
 		return ""
 	}
-	if code(1) == "ConditionalCheckFailed" {
-		return true, false
+	any := false
+	conflicts = make([]bool, k)
+	for i := range k {
+		if code(1+2*i) == "ConditionalCheckFailed" {
+			conflicts[i], any = true, true
+		}
+	}
+	if any {
+		return conflicts, false
 	}
 	for i := range tce.CancellationReasons {
 		switch code(i) {
 		case "ConditionalCheckFailed", "TransactionConflict":
-			return false, true
+			return nil, true
 		}
 	}
-	return false, false
+	return nil, false
 }
 
 func isItemTooLarge(err error) bool {
@@ -372,4 +508,14 @@ func binAttr(item map[string]types.AttributeValue, name string) []byte {
 		return b.Value
 	}
 	return nil
+}
+
+// batchStats counts the transactions and the writes they carried, for
+// the benchmark's writes per transaction column.
+var batchStats struct{ transactions, writes atomic.Int64 }
+
+// BatchStats returns how many transactions the stores of this process
+// committed and how many writes they carried.
+func BatchStats() (transactions, writes int64) {
+	return batchStats.transactions.Load(), batchStats.writes.Load()
 }

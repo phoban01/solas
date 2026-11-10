@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apiserver/pkg/apis/example"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -145,5 +148,88 @@ func TestCommitConcurrentWritersHaveNoGaps(t *testing.T) {
 	}
 	if got := eventVersions(t, s); len(got) != writers*each+1 || got[len(got)-1] != writers*each+1 {
 		t.Errorf("event log = %v, want 1 to %d", got, writers*each+1)
+	}
+}
+
+// countingAPI counts the transactions the store sends.
+type countingAPI struct {
+	API
+	transactions atomic.Int64
+}
+
+func (c *countingAPI) TransactWriteItems(ctx context.Context, in *dynamodb.TransactWriteItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
+	c.transactions.Add(1)
+	return c.API.TransactWriteItems(ctx, in, opts...)
+}
+
+//= spec/solas.md#2-3-writes
+//= type=test
+//# A call MAY carry several writes of one resource that arrived at the
+//# server together.
+
+//= spec/solas.md#2-3-writes
+//= type=test
+//# The writes of a call MUST get the versions `n + 1` to `n + k`, in the
+//# order of the call.
+
+// TestCommitBatchesConcurrentWrites: forty writers that start together
+// commit in fewer transactions than writes, every write gets its own
+// version, the versions are consecutive, and the event log has no gap.
+func TestCommitBatchesConcurrentWrites(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	counting := &countingAPI{API: s.client}
+	s.client = counting
+	createPods(t, s, "seed") // version 2, and the counter exists
+	before := counting.transactions.Load()
+
+	const writers = 40
+	versions := make(chan uint64, writers)
+	errs := make(chan error, writers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			name := fmt.Sprintf("p%02d", i)
+			out := &example.Pod{}
+			if err := s.Create(ctx, "/pods/ns/"+name, &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"}}, out, 0); err != nil {
+				errs <- err
+				return
+			}
+			rv, err := s.versioner.ObjectResourceVersion(out)
+			if err != nil {
+				errs <- err
+				return
+			}
+			versions <- rv
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(versions)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	var got []uint64
+	for rv := range versions {
+		got = append(got, rv)
+	}
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	for i, rv := range got {
+		if rv != 3+uint64(i) {
+			t.Fatalf("versions = %v, want 3 to %d with no gap", got, 2+writers)
+		}
+	}
+	if n := counting.transactions.Load() - before; n >= writers {
+		t.Errorf("%d writes took %d transactions; batching should take fewer", writers, n)
+	} else {
+		t.Logf("%d writes in %d transactions", writers, n)
+	}
+	if evs := eventVersions(t, s); len(evs) != 2+writers {
+		t.Errorf("event log has %d events, want %d", len(evs), 2+writers)
 	}
 }

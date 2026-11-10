@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -17,15 +19,24 @@ const defaultRegion = "us-east-1"
 
 // CallTimeout bounds each call to DynamoDB, so a store that hangs fails
 // the request instead of holding it, spec 16.1. Each call makes at most
-// CallAttempts attempts.
+// CallAttempts attempts in the server, which turns a store that is
+// throttled or down into a quick 503 that the controllers retry within
+// D / 3. A tool that fills a table, such as solas-bench, asks for more.
 const (
 	CallTimeout  = 10 * time.Second
 	CallAttempts = 2
 )
 
-// DynamoClient returns a DynamoDB client for a DynamoDB storage URL. The
-// credentials come from the AWS environment.
+// DynamoClient returns a DynamoDB client for a DynamoDB storage URL, with
+// the server's timeout and attempts. The credentials come from the AWS
+// environment.
 func DynamoClient(ctx context.Context, c Config) (*dynamodb.Client, error) {
+	return DynamoClientWithAttempts(ctx, c, CallAttempts)
+}
+
+// DynamoClientWithAttempts returns a client that makes up to attempts
+// attempts per call, with the SDK's backoff between them.
+func DynamoClientWithAttempts(ctx context.Context, c Config, attempts int) (*dynamodb.Client, error) {
 	var opts []func(*awsconfig.LoadOptions) error
 	if c.Region != "" {
 		opts = append(opts, awsconfig.WithRegion(c.Region))
@@ -42,6 +53,15 @@ func DynamoClient(ctx context.Context, c Config) (*dynamodb.Client, error) {
 			opts.BaseEndpoint = aws.String(c.Endpoint)
 		}
 		opts.HTTPClient = awshttp.NewBuildableClient().WithTimeout(CallTimeout)
-		opts.RetryMaxAttempts = CallAttempts
+		if attempts > CallAttempts {
+			// A tool that fills a throttled table retries often; the SDK's
+			// default retry quota would run out and fail every call at once.
+			opts.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+				so.MaxAttempts = attempts
+				so.RateLimiter = ratelimit.None
+			})
+			return
+		}
+		opts.RetryMaxAttempts = attempts
 	}), nil
 }

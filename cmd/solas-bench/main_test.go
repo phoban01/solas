@@ -32,3 +32,14 @@ func TestWatchLagEitherOrder(t *testing.T) {
 		t.Errorf("lags = %v, want [30ms 40ms]", st.watchLag)
 	}
 }
+
+func TestOverBudget(t *testing.T) {
+	for _, c := range []struct {
+		used, limit int64
+		want        bool
+	}{{5, 10, false}, {10, 10, false}, {11, 10, true}, {1 << 40, 0, false}} {
+		if got := overBudget(c.used, c.limit); got != c.want {
+			t.Errorf("overBudget(%d, %d) = %v, want %v", c.used, c.limit, got, c.want)
+		}
+	}
+}

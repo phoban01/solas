@@ -68,8 +68,13 @@ from the VM or from one EC2 instance in the table's region.
   a list, so the counter item alone is the limit. The row gives the
   writes per second of one item, against the 1000 per second that ADR
   0003 assumed. A DynamoDB partition sustains 1000 write units per
-  second, and a transaction costs two per item, so expect about 500
-  transactions per second per resource.
+  second, and a transaction costs two per item, so the plan expected about
+  500 transactions per second per resource. The runs of 2026-11-09 found
+  12 to 15 binds per second from 50 ms away and a third of that from
+  140 ms, bound by the write loop, not the table: writers raced on the
+  counter item and one got through per two round trips. Spec 2.3 now
+  batches the writes of a server; #267 and #268 take it further. The
+  expectation was wrong by a factor of twenty.
 - **The partition limit on lists.** All objects of a resource share one
   partition key, so a list of 10,000 devices reads about 10,000 read
   units from one partition, whose limit is 3000 per second. The 10,000

@@ -32,3 +32,20 @@ watch ends with `410 Gone`.
   We can add them later behind the same interface.
 - No event log, with a full list on each poll. This loses the order and
   the delete events that watch must deliver.
+
+## Decision kept: polling at 200 ms (2026-11-09)
+
+The rows of docs/benchmarks.md, "Poll interval", measured the watch on a
+real table in eu-west-1 at poll intervals of 100, 200, and 500 ms with
+8 members: lag p50 of 65, 93, and 154 ms, lag p99 of 140, 233, and
+541 ms, and 49, 40, and 23 store reads per member per second. The lag is
+about the round trip plus half the interval. A lease of 30 seconds with
+a renew every 10 does not feel a lag of a tenth of a second, and the
+soak and the e2e tests show the reclaim and the fencing work with it.
+
+DynamoDB Streams would cut the lag to the stream's own delivery and the
+polls to zero, at the cost of shard handling, a 24 hour retention, and a
+second delivery path to trust. Nothing in the rows asks for it. The
+default stays 200 ms; `--poll-interval` moves it for a mesh that wants
+less lag or fewer reads. This decision is revisited when a row shows the
+polls as a cost that matters, or a workload needs a lag below 100 ms.

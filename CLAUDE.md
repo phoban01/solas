@@ -127,6 +127,7 @@ filler, no marketing adjectives, no emoji.
 - `cmd/solas/` the one binary: the extension server and the controller;
   `demo/k3d/` two-cluster demo
 - `docs/plan-evidence.md` the plan to close the evidence gaps (M20 to M25);
+  `docs/adding-a-kind.md` what a new kind touches, and what it never does;
 - `docs/confidence.md` the trust ladder; `docs/sim-gate.md` the simulator;
   `docs/benchmarks.md` every measured number;
   `docs/scale.md` the scale results;

@@ -51,6 +51,8 @@ start_local_stores() {
     echo "$tag: dynamodb-local at $SOLAS_DYNAMODB_ENDPOINT"
   elif [ -z "${SOLAS_DYNAMODB_ENDPOINT:-}" ]; then
     echo "$tag: no Docker; nothing that needs DynamoDB runs"
+  elif [ "${SOLAS_DYNAMODB_ENDPOINT}" != none ]; then
+    echo "$tag: DynamoDB at $SOLAS_DYNAMODB_ENDPOINT"
   fi
 
   if [ -z "${SOLAS_ETCD_ENDPOINT:-}" ] && command -v etcd >/dev/null; then

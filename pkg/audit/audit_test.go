@@ -81,3 +81,13 @@ func TestHolderOfEachToken(t *testing.T) {
 		t.Error("Holder(d1, 3) found a holder for a token that no bind gave")
 	}
 }
+
+// TestHolderOfTheFirstState: a device that is held when the replay
+// starts has a holder for its token.
+func TestHolderOfTheFirstState(t *testing.T) {
+	r := New()
+	r.Apply(watch.Added, state("9", 3, ref("a", "c1", "1"), nil))
+	if got, ok := r.Holder("d1", 3); !ok || got != "a/ns/c1" {
+		t.Errorf("Holder(d1, 3) = %q, %v; want a/ns/c1", got, ok)
+	}
+}

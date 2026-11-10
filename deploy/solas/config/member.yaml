@@ -11,3 +11,5 @@ data:
   leaseDuration: 30s
   leaseMargin: 3s
   sweepInterval: 10s
+  # How many claims the controller reconciles at once, spec 6.2 and 2.3.
+  claimWorkers: "4"
