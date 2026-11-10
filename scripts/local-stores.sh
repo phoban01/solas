@@ -60,6 +60,7 @@ start_local_stores() {
     dir=$(mktemp -d)
     client=$(free_port)
     peer=$(free_port)
+    while [ "$peer" = "$client" ]; do peer=$(free_port); done
     # SOLAS_ETCD_FSYNC=1 keeps fsync on, for a benchmark of what it costs.
     local fsync_flag=--unsafe-no-fsync
     [ -n "${SOLAS_ETCD_FSYNC:-}" ] && fsync_flag=""
@@ -69,7 +70,10 @@ start_local_stores() {
       --listen-peer-urls "http://127.0.0.1:$peer" --initial-advertise-peer-urls "http://127.0.0.1:$peer" \
       --initial-cluster "default=http://127.0.0.1:$peer" >"$dir/log" 2>&1 &
     cleanup+=("kill $! 2>/dev/null || true; wait $! 2>/dev/null || true; rm -rf $dir")
-    wait_port "$client"
+    if ! wait_port "$client"; then
+      cat "$dir/log" >&2
+      return 1
+    fi
     export SOLAS_ETCD_ENDPOINT="http://127.0.0.1:$client"
     echo "$tag: etcd at $SOLAS_ETCD_ENDPOINT"
   elif [ -z "${SOLAS_ETCD_ENDPOINT:-}" ]; then

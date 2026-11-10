@@ -45,7 +45,9 @@ copies, and verifies, and each cluster then gets the new URL.
 ## Tests
 
 `devbox run verify` runs the unit tests, the Quint model checks, the
-model-based tests on both stores, and the Duvet traceability gate. Set
+model-based tests on both stores, and the Duvet traceability gate, and
+prints the time of each step; the model checks skip when nothing they
+read changed since a green run. Set
 `SOLAS_STORE=etcd` to run `devbox run demo`, `devbox run e2e`, or
 `devbox run smoke` on etcd. `devbox run scale` runs the load tool
 `solas-bench` on both local stores, and `devbox run soak` runs faults

@@ -9,3 +9,4 @@
 .claude/settings.local.json
 /solas-bench
 /solas
+/.cache/

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Model-based tests: generate traces of quint/solas.qnt with a fixed seed,
-# then replay each one against the real REST stores on dynamodb-local.
+# then replay each one against the real REST stores, on dynamodb-local
+# and on etcd. The traces are generated once, and the two stores start
+# once, for the replay on each store.
 # The traces of step include faults, transfers, and recoveries. The
 # traces of calmStep have none, so they reach preemption. The traces of
 # calmTransferStep add the transfer to calmStep, so they reach a bind
@@ -9,15 +11,33 @@
 #   MBT_STEPS  steps per trace of step (default 30)
 #   MBT_CALM_STEPS  steps per trace of calmStep (default 80)
 #   MBT_SEED   seed of the trace generator (default 0x5eed)
-#   MBT_STORE  the store to replay on: dynamodb (default) or etcd
+#   MBT_STORES the stores to replay on (default "dynamodb etcd")
+#   MBT_STORE  one store to replay on, instead of MBT_STORES
+#
+# The script skips when the model, the code, this script, and the
+# settings are unchanged since a green run, scripts/stamp-lib.sh.
+# VERIFY_FORCE=1 runs it all the same.
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
+# shellcheck source=scripts/stamp-lib.sh
+source scripts/stamp-lib.sh
+# shellcheck source=scripts/local-stores.sh
+source scripts/local-stores.sh
 
-dir=$(mktemp -d)
-trap 'rm -rf "$dir"' EXIT
 count=${MBT_COUNT:-40}
 seed=${MBT_SEED:-0x5eed}
+stores=${MBT_STORES:-${MBT_STORE:-dynamodb etcd}}
+
+key=$(stamp_key "$(quint --version) count=$count seed=$seed steps=${MBT_STEPS:-30} calm=${MBT_CALM_STEPS:-80} stores=$stores" \
+  quint/solas.qnt mbt pkg cmd internal go.mod go.sum scripts/mbt.sh scripts/test.sh scripts/local-stores.sh)
+if stamp_fresh mbt "$key"; then
+  echo "skip  mbt: the model and the code are unchanged since a green run ($key); VERIFY_FORCE=1 runs it"
+  exit 0
+fi
+
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"; for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
 
 quint run quint/solas.qnt --main solas2 --step step --mbt \
   --max-steps "${MBT_STEPS:-30}" --max-samples "$count" --n-traces "$count" \
@@ -37,5 +57,11 @@ echo "mbt: generated $(find "$dir" -name '*.itf.json' | wc -l) traces," \
   "$(grep -l 'actionTaken":"bindOffer"' "$dir"/*.itf.json | wc -l) with a transfer,"\
   "$(grep -l 'actionTaken":"recoverWrite"' "$dir"/*.itf.json | wc -l) with a recovery"
 
-echo "mbt: replay on ${MBT_STORE:-dynamodb}"
-MBT_TRACES=$dir TEST_PKGS=./mbt/... scripts/test.sh -count=1 -run 'TestMBT'
+# The stores start once and serve the replay on each one: a test makes
+# its own table or prefix and removes it.
+start_local_stores mbt
+for store in $stores; do
+  echo "mbt: replay on $store"
+  MBT_STORE=$store MBT_TRACES=$dir TEST_PKGS=./mbt/... scripts/test.sh -count=1 -run 'TestMBT'
+done
+stamp_set mbt "$key"
