@@ -587,7 +587,17 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: creation time of each object.
     TEXT[!MUST,implementation]: The copy MUST NOT keep the resource version.
     TEXT[!MUST,implementation,test]: After the copy, the tool MUST verify that each object in the destination
-    TEXT[!MUST,implementation,test]: equals its source, except for the resource version.
+    TEXT[!MUST,implementation,test]: equals its source, except for the resource version and the epoch.
+    TEXT[!MUST,implementation,test]: After the verify, and before any cluster writes to the destination, the
+    TEXT[!MUST,implementation,test]: tool MUST move the destination to a new epoch, spec 13.1, with every
+    TEXT[!MUST,implementation,test]: resource version that it issues above every resource version of the
+    TEXT[!MUST,implementation,test]: source, spec 13.3.
+    TEXT[test]: So a version or a token that the destination issues is above every one
+    TEXT[test]: that the source issued, and a client that keeps a version of the source
+    TEXT[test]: gets `410 Gone` from the destination, as after a restore.
+    TEXT[!MUST,implementation]: An etcd destination cannot raise its revision, so the tool MUST refuse
+    TEXT[!MUST,implementation]: an etcd destination whose revision is below the highest resource version
+    TEXT[!MUST,implementation]: of the source.
 
   SECTION: [12.3. A store that cannot be sealed](#12-3-a-store-that-cannot-be-sealed)
     TEXT[!MUST]: Before a move from such a store, the operator MUST stop solas in every

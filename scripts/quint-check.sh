@@ -138,6 +138,10 @@ queue pass "negative no-epoch" quint test quint/negative/no-epoch.qnt \
 # tokensUnique, spec 11.2.
 queue pass "negative no-token-raise" quint test quint/negative/no-token-raise.qnt \
   --main no_token_raise --match tokenRaiseTest
+# The test passes when a copy that keeps the versions of the destination
+# sends a version back, spec 12.2.
+queue pass "negative no-move-epoch" quint test quint/negative/no-move-epoch.qnt \
+  --main no_move_epoch --match versionBackTest
 # The test passes when the forced clear of spec 10.8 breaks
 # claimMatchesDevice.
 queue pass "negative force-clear" quint test quint/negative/force-clear.qnt \

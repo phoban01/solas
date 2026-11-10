@@ -38,6 +38,17 @@ start again in the new store.
    every write with `503 store is sealed`. Reads keep working. Then the
    tool copies every `Device` and `Member` and checks the copy.
 
+   Last, the tool moves the new store to a new epoch, so every
+   resource version and fencing token it issues is above every one
+   of the old store, and a client that kept a version of the old
+   store gets `410 Gone` and lists again. An etcd store cannot raise
+   its revision, so the tool refuses one whose revision is below
+   the highest version of the old store; raise it first:
+
+   ```sh
+   etcdutl snapshot restore empty.db --bump-revision <highest version> --mark-compacted
+   ```
+
 2. In each member cluster, set the `url` key of the Secret
    `solas-storage` to the new URL, and restart solas:
 
@@ -119,7 +130,7 @@ after a move from etcd. Start solas on the old URL again.
 ## Check a move
 
 `solas migrate verify` compares two stores at any time. It ignores
-resource versions:
+resource versions and the epoch:
 
 ```sh
 solas migrate verify --from <old url> --to <new url>

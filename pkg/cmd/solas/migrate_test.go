@@ -3,13 +3,18 @@ package solas
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	k8sstorage "k8s.io/apiserver/pkg/storage"
 
 	"github.com/phoban01/solas/internal/ddbtest"
@@ -58,6 +63,9 @@ func TestMigrate(t *testing.T) {
 	}
 
 	args := []string{"migrate", "--from", from, "--to", to, "--storage-prefix", prefix}
+	// The etcd destination must be at a revision above every version of
+	// the source, spec 12.2; a fresh test etcd is not.
+	bumpRevision(t, to, prefix+"-bump", 20)
 	if out, err := run(t, append(args, "--dry-run")...); err != nil || !strings.Contains(out, "would copy 1 devices and 0 members") {
 		t.Fatalf("dry run: %v\n%s", err, out)
 	}
@@ -148,5 +156,109 @@ func TestRefuseStartAboveMaxFormat(t *testing.T) {
 	}
 	if err := checkFormat(ctx, s); err == nil || !strings.Contains(err.Error(), "finalized at format 2") {
 		t.Errorf("start on a store at format 2: err = %v, want a refusal", err)
+	}
+}
+
+// bumpRevision raises the revision of the test etcd by n writes under a
+// prefix of its own, which the move never reads.
+func bumpRevision(t *testing.T, u, prefix string, n int) {
+	t.Helper()
+	ctx := context.Background()
+	s, err := migrate.Open(ctx, u, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for i := range n {
+		m := &solas.Member{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("bump-%d", i)}}
+		if err := s.Members.Create(ctx, fmt.Sprintf("/solas.dev/members/bump-%d", i), m, &solas.Member{}, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+//= spec/solas.md#12-2-copy
+//= type=test
+//# After the verify, and before any cluster writes to the destination, the
+//# tool MUST move the destination to a new epoch, spec 13.1, with every
+//# resource version that it issues above every resource version of the
+//# source, spec 13.3.
+
+//= spec/solas.md#12-2-copy
+//= type=test
+//# So a version or a token that the destination issues is above every one
+//# that the source issued, and a client that keeps a version of the source
+//# gets `410 Gone` from the destination, as after a restore.
+
+// A move between two DynamoDB tables. After it, a write on the
+// destination gets a version above every version of the source, and a
+// watch from a version of the source ends with 410 Gone.
+func TestMigrateMovesEpoch(t *testing.T) {
+	ctx := context.Background()
+	endpoint := os.Getenv(ddbtest.EndpointEnv)
+	if endpoint == "" {
+		t.Skipf("%s is not set; run the tests with devbox run test", ddbtest.EndpointEnv)
+	}
+	t.Setenv("AWS_ACCESS_KEY_ID", "local")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "local")
+	table := func(suffix string) string {
+		name := ddbtest.TableName(t) + suffix
+		ddbtest.DeleteTable(t, ddbtest.Client(t), name)
+		return "dynamodb://" + name + "?create-table=true&endpoint=" + url.QueryEscape(endpoint)
+	}
+	from, to, prefix := table("-src"), table("-dst"), "/registry"
+
+	src, err := migrate.Open(ctx, from, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	for i := range 5 {
+		d := &solas.Device{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("d%d", i), UID: types.UID(fmt.Sprintf("uid-d%d", i))}}
+		if err := src.Devices.Create(ctx, "/solas.dev/devices/"+d.Name, d, &solas.Device{}, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	top, err := src.HighestVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := run(t, "migrate", "--from", from, "--to", to, "--storage-prefix", prefix); err != nil || !strings.Contains(out, "to epoch") {
+		t.Fatalf("migrate: %v\n%s", err, out)
+	}
+
+	dst, err := migrate.Open(ctx, to, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	if e, err := dst.Epoch(ctx); err != nil || e <= 0 {
+		t.Errorf("destination epoch = %d, %v; want above 0", e, err)
+	}
+	m := &solas.Member{ObjectMeta: metav1.ObjectMeta{Name: "m1"}}
+	out := &solas.Member{}
+	if err := dst.Members.Create(ctx, "/solas.dev/members/m1", m, out, 0); err != nil {
+		t.Fatal(err)
+	}
+	rv, _ := strconv.ParseUint(out.ResourceVersion, 10, 64)
+	if rv <= top {
+		t.Errorf("the first write on the destination got version %d, want above %d, the highest of the source", rv, top)
+	}
+
+	w, err := dst.Devices.Watch(ctx, "/solas.dev/devices", k8sstorage.ListOptions{
+		ResourceVersion: strconv.FormatUint(top, 10), Recursive: true, Predicate: k8sstorage.Everything})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+	select {
+	case ev := <-w.ResultChan():
+		st, ok := ev.Object.(*metav1.Status)
+		if ev.Type != watch.Error || !ok || st.Code != 410 {
+			t.Errorf("a watch from a version of the source got %s %T, want an error with 410 Gone", ev.Type, ev.Object)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("a watch from a version of the source got nothing in 10 s, want 410 Gone")
 	}
 }

@@ -63,3 +63,26 @@ destination.
   free.
 - A copy through the API server. The status strategy sets the fencing
   token on each bind, so the copy would not keep the tokens.
+
+## Amendment: versions never go back across a move (2026-11-10)
+
+The copy gave each object a new resource version from the destination,
+which started at 1 on a new store. A client that kept a version of the
+source and watched the destination then got unrelated events, or on an
+etcd destination a watch that waited for a revision that was never
+reached, and nothing told it to list again. The fencing tokens were
+safe, because the copy keeps them and a bind continues from them.
+
+Decision: a move is a restore from the point of view of a client. After
+the verify, the tool moves the destination to a new epoch, ADR 0018:
+every counter item goes to `epoch * 2^32`, above every version of the
+source, and the next bind on a free device gets a token of the new
+epoch. A client with a version of the source gets `410 Gone` from the
+destination and lists again. An etcd destination cannot raise its
+revision from the tool, so the tool refuses one whose revision is below
+the highest version of the source, and the operator raises it first
+with `etcdutl snapshot restore --bump-revision`. The verify and the
+unseal check ignore the epoch of the store format, which the move
+raises. The model `quint/migrate.qnt` carries the version order as an
+invariant, and `quint/negative/no-move-epoch.qnt` shows a copy without
+the epoch move breaking it. Issue #271.
