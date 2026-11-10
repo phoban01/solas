@@ -6,3 +6,5 @@
 /_apalache-out/
 /demo/k3d/.kube/
 /demo/k3d/setup.log
+/solas-bench
+/solas
