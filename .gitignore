@@ -7,3 +7,5 @@
 /demo/k3d/.kube/
 /demo/k3d/setup.log
 .claude/settings.local.json
+/solas-bench
+/solas
