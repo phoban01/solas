@@ -35,6 +35,7 @@ need a correction before the plan:
 | Wide surface, thin evidence | `docs/confidence.md`: every claim of the README and the ADRs, with the test, model, or row that backs it, or the word "open" | M25 |
 | No server-side ownership | ADR 0022 decided and built: a partition per member, IAM and etcd roles per member, and a test that one member's credentials cannot write another member's objects | M24 |
 | An operator cannot see conflicts, lag, or sweeps | The metrics and the audit trail of M19 (#225 to #229) | M24 |
+| A move into solas, or between stores, has no evidence | Versions that never go back across a move, spec 12.2 and 13.1; a timed live move and its rollback as e2e tests with rows; the pivot in CI; admission and owner references across API servers tested; `docs/migration.md` | M26 |
 
 Issues #232 (etcd at start) and the M19 fault injection issues (#217 to
 #220) stay in M19 and run alongside.
@@ -178,6 +179,45 @@ ADR 0017 moves from proposed to accepted, with the measured cost.
   each row, the limits, the cost of a kind, and the open decisions. The
   same shape that a decision brief has, so it reads next to others.
 
+## M26: Migration evidence
+
+A team that adopts solas moves existing state into it, and later may
+move the store. The pattern has the pieces: the pivot of ADR 0010 for a
+kind that lives as a CRD today, `solas migrate` of ADR 0015 for a move
+between stores, and the epoch of ADR 0018 so tokens and versions never
+go back. What it lacks is evidence for each, and one rule.
+
+- **#271, versions never go back across a move.** Spec 12.2 lets the
+  destination start its versions at 1. A client that keeps a version
+  from the source and watches the destination then gets unrelated
+  events, or an error, and nothing tells it to list again. Rule: the
+  tool moves the destination to a new epoch, spec 13.1, before the
+  copy, so every version and token it issues is above every one of the
+  source. On etcd the operator bumps the revision first, and the tool
+  refuses a destination below the source. Quint: `migrate.qnt` gets a
+  version order invariant. Test: a watch from a source version fails
+  with `410 Gone` on the destination.
+- **#272, a live move, timed.** An e2e with two clusters: seal, copy, switch,
+  and every claim back to `Bound` with the same holder and token. The
+  row: seconds from the seal to the last `Bound`, on dynamodb-local and
+  on a real table.
+- **#273, a rollback, tested.** The same e2e unseals before any write to the
+  destination and shows the mesh back on the source.
+- **#274, the pivot in CI.** `scripts/pivot-smoke.sh` runs by hand today. It
+  becomes an e2e, with a rollback step: remove the webhook, and the old
+  CRD serves on. Row: the time the webhook adds to a write of the old
+  CRD.
+- **#275, admission from the hosting cluster.** The server runs the admission
+  chain of `k8s.io/apiserver`, so a validating webhook of the hosting
+  cluster applies to a `Device`. An e2e shows a webhook denying a write.
+- **#276, owner references across API servers.** A local object that names a
+  `Device` as its owner: does the garbage collector of the hosting
+  cluster handle an owner that an aggregated server serves? An e2e
+  answers it, and `docs/adding-a-kind.md` records the answer.
+- **#277, `docs/migration.md`.** The playbook: which kinds move, the phases
+  with the rollback of each, the write freeze and its length from the
+  row, and the rehearsal on k3d.
+
 ## Order
 
 M22 first: it is local, it changes the numbers that M20 measures, and
@@ -185,8 +225,10 @@ M22 first: it is local, it changes the numbers that M20 measures, and
 anything. Then M20 and M21 in parallel: M20 is runs and rows, M21 is
 code. M23 after M21, because the deep soak runs through the gatekeeper.
 M24 after M20, because the partition per member changes the table
-layout, and the M20 rows should measure the layout that ships. M25
-last; it only collects.
+layout, and the M20 rows should measure the layout that ships. M26
+after M24, because the move e2e should run on the layout that ships,
+and its rule on versions is small enough to land first. M25 last; it
+only collects.
 
 ## The cost of M20
 

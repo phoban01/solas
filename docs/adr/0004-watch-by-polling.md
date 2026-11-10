@@ -49,3 +49,16 @@ second delivery path to trust. Nothing in the rows asks for it. The
 default stays 200 ms; `--poll-interval` moves it for a mesh that wants
 less lag or fewer reads. This decision is revisited when a row shows the
 polls as a cost that matters, or a workload needs a lag below 100 ms.
+
+## Amendment: the poll hint (2026-11-10)
+
+A consistent list from the watch cache reads the counter, then waits
+for the cache to reach that value. Before this amendment the wait went
+through a progress request: the watcher read the counter again and
+polled. On a real table that was two round trips after the list's own
+counter read. Now the server hands the counter value of the list to
+every watcher of the resource, and the watcher polls with that value at
+once and sends a bookmark, spec 4.2. The list costs one round trip for
+the counter and one for the poll. The rows of docs/benchmarks.md, "Bind
+burst", measured a consistent list at 27 to 42 ms on a table with a
+40 ms round trip, with the cache wait at 22 to 28 ms.

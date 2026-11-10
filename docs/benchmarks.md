@@ -305,18 +305,43 @@ is 10 seconds, as in the demo.
 | 2026-11-09 | cde2cd8 | dynamodb-local | 4 | 50 | 2.3 | 21.7 |
 | 2026-11-10 | aa5d7c1 | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 8.6 | 5.8 |
 | 2026-11-10 | aa5d7c1 | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 6.9 | 7.2 |
+| 2026-11-10 | d8fecb7, the poll hint alone | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 8.1 | 6.2 |
+| 2026-11-10 | d8fecb7, the poll hint alone | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 7.7 | 6.5 |
+| 2026-11-10 | d8fecb7 | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 8.1 | 6.2 |
+| 2026-11-10 | d8fecb7 | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 4.5 | 11.1 |
 
 With one worker a cluster binds one claim per reconcile, list and write
 in turn. Four workers bind two and a half times as fast on a local
 store, where the round trip is short and the gain is the parallel lists
-and writes. On the real table the gain is a quarter: each bind still
-pays a consistent list, which waits for the cache to catch up with the
-counter through a progress poll, and then a transaction, and the four
-workers' writes share a transaction only when they arrive in the same
-window. A cluster's bind rate on a real table is bound by those round
-trips, and a burst of 50 claims binds in 7 to 9 seconds either way.
-The rows say that #268 helps, and that the next gain is in the list
-before the bind, not in more workers.
+and writes. On the real table at aa5d7c1 the gain was a quarter: each
+bind paid a consistent list, which waited for the cache to catch up
+with the counter through a progress poll, and then its writes.
+
+The server's own histograms say where a bind goes. With
+`SOLAS_BURST_METRICS=<dir>` the script dumps `/metrics` of the server
+after the burst, and `scripts/metrics-summary.sh` prints the mean of
+each request kind. The rows are the four-worker burst unless marked.
+
+| Date | Commit | LIST devices, mean | Watch cache wait, mean | PUT devices/status, mean | GET devices, mean |
+|------|--------|-------------------:|-----------------------:|-------------------------:|------------------:|
+| 2026-11-10 | d8fecb7, the poll hint alone | 27 ms (318 calls) | 22 ms (85 waits) | 190 ms (143 calls) | 109 ms (100 calls) |
+| 2026-11-10 | d8fecb7 | 42 ms (190 calls) | 28 ms (83 waits) | 155 ms (108 calls) | 28 ms (100 calls) |
+| 2026-11-10 | d8fecb7, one worker | 40 ms (146 calls) | 27 ms (57 waits) | 99 ms (100 calls) | 28 ms (100 calls) |
+
+The poll hint of spec 4.2 took the list to one round trip: the server
+polls at once with the counter value it read for the list, and the
+cache waits one query instead of a progress request and a second
+counter read. That alone changed the burst little, because the bind's
+status write cost four round trips: a read of the device, a read of
+the member policy, the counter read, and the transaction. The
+registry now runs the limit checks inside the store's update, on the
+cached object, and reads the policy from the watch cache, spec 15.1.
+The write costs the counter read and the transaction, and the
+four-worker burst binds in 4.5 seconds, 11 binds per second. One
+worker stays at 8 seconds: it binds one claim at a time, and each
+costs a list, a status write, and the claim's own write to etcd, in
+turn. The remaining round trip before each transaction is the counter
+read, issue #267.
 
 Method: `devbox run soak`, the test `TestSoak` in
 `test/e2e/soak_test.go`. Two clusters share one store and a device
