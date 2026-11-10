@@ -24,8 +24,8 @@ jobs:
       - name: Install Duvet
         run: devbox run duvet-install
 
-      - name: Cache the stamps of green checks
-        uses: actions/cache@v6
+      - name: Restore the stamps of green checks
+        uses: actions/cache/restore@v6
         with:
           path: .cache/verify
           key: verify-stamps-${{ github.run_id }}
@@ -33,3 +33,12 @@ jobs:
 
       - name: Verify
         run: devbox run verify
+
+      # The stamps are saved even when a check fails: each stamp marks a
+      # check that passed, so the next run pays only for what failed.
+      - name: Save the stamps of green checks
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/verify
+          key: verify-stamps-${{ github.run_id }}

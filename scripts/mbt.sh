@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Model-based tests: generate traces of quint/solas.qnt with a fixed seed,
 # then replay each one against the real REST stores, on dynamodb-local
-# and on etcd. The traces are generated once and replayed on each store.
+# and on etcd. The traces are generated once, and the two stores start
+# once, for the replay on each store.
 # The traces of step include faults, transfers, and recoveries. The
 # traces of calmStep have none, so they reach preemption. The traces of
 # calmTransferStep add the transfer to calmStep, so they reach a bind
@@ -21,6 +22,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 # shellcheck source=scripts/stamp-lib.sh
 source scripts/stamp-lib.sh
+# shellcheck source=scripts/local-stores.sh
+source scripts/local-stores.sh
 
 count=${MBT_COUNT:-40}
 seed=${MBT_SEED:-0x5eed}
@@ -34,7 +37,7 @@ if stamp_fresh mbt "$key"; then
 fi
 
 dir=$(mktemp -d)
-trap 'rm -rf "$dir"' EXIT
+trap 'rm -rf "$dir"; for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
 
 quint run quint/solas.qnt --main solas2 --step step --mbt \
   --max-steps "${MBT_STEPS:-30}" --max-samples "$count" --n-traces "$count" \
@@ -54,6 +57,9 @@ echo "mbt: generated $(find "$dir" -name '*.itf.json' | wc -l) traces," \
   "$(grep -l 'actionTaken":"bindOffer"' "$dir"/*.itf.json | wc -l) with a transfer,"\
   "$(grep -l 'actionTaken":"recoverWrite"' "$dir"/*.itf.json | wc -l) with a recovery"
 
+# The stores start once and serve the replay on each one: a test makes
+# its own table or prefix and removes it.
+start_local_stores mbt
 for store in $stores; do
   echo "mbt: replay on $store"
   MBT_STORE=$store MBT_TRACES=$dir TEST_PKGS=./mbt/... scripts/test.sh -count=1 -run 'TestMBT'
