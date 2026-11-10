@@ -239,6 +239,92 @@ counter item shared by the servers, about one transaction per two round
 trips across them all, which issue #267 is for; and a cluster's one
 claim worker, which issue #268 is for. No run had an error once the
 bench retried without the SDK's shared quota.
+### In the table's region (#243)
+
+Method: `scripts/aws-bench.sh ec2 up eu-west-1` starts one c6i.2xlarge
+(8 vCPUs, 16 GB) in eu-west-1 with the bench, and `ec2 scale` runs it
+against the table at 32 and 128 members, with the default pool and with
+10,000 devices, 20 seconds per run, 8 claims per member. The TCP connect
+time from the instance to DynamoDB was 1.4 to 2.5 ms. The rows at 2 and
+8 members, and the second row at 32 members and 10,000 devices, came
+from a second instance a few minutes later with the bench of 410a4f3,
+which waits 10 ms after a failed list.
+
+| Date | Commit | Region, connect | Members | Devices | Run | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Writes/tx | Errors |
+|------|--------|-----------------|--------:|--------:|----:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|----------:|-------:|
+| 2026-11-10 | 410a4f3 | eu-west-1, in the region, 2 ms | 2 | 16 | 20 s | 35.6 | 42.2 | 113.8 | 434.9 | 4.1 | 13.8 | 102.7 | 19.3 | 186.8 | 124.3 | 1.6 | 0 |
+| 2026-11-10 | 410a4f3 | eu-west-1, in the region, 2 ms | 8 | 64 | 20 s | 57.8 | 36.3 | 75.7 | 1404.8 | 3.9 | 83.8 | 102.9 | 69.0 | 199.0 | 51.7 | 3.0 | 0 |
+| 2026-11-10 | 3d388b1 | eu-west-1, in the region, 2 ms | 32 | 256 | 20 s | 47.1 | 45.7 | 645.2 | 4014.0 | 4.0 | 211.2 | 105.2 | 90.7 | 199.5 | 23.3 | 3.1 | 0 |
+| 2026-11-10 | 3d388b1 | eu-west-1, in the region, 2 ms | 128 | 1024 | 20 s | 21.9 | 45.1 | 11063.6 | 34968.7 | 377.6 | 660.1 | 110.0 | 98.9 | 200.0 | 13.6 | 3.4 | 0 |
+| 2026-11-10 | 3d388b1 | eu-west-1, in the region, 2 ms | 32 | 10000 | 20 s | 48.1 | 1.5 | 1652.1 | 12433.7 | 25.9 | 545.7 | 1714.1 | 104.8 | 416.5 | 18.7 | 6.5 | 13408312 |
+| 2026-11-10 | 410a4f3 | eu-west-1, in the region, 2 ms | 32 | 10000 | 20 s | 58.2 | 1.2 | 1530.7 | 9194.2 | 8.2 | 725.5 | 407.4 | 97.2 | 200.6 | 19.7 | 6.5 | 6388 |
+| 2026-11-10 | 3d388b1 | eu-west-1, in the region, 2 ms | 128 | 10000 | 20 s | 20.7 | 5.3 | 22406.5 | 47900.6 | 1265.0 | 2713.7 | 2115.3 | 101.3 | 204.3 | 11.8 | 6.5 | 0 |
+
+**The ceiling is the store's, not the distance.** From 2 ms away the
+Device resource gave 58 binds per second at 8 members and 47 at 32,
+against 27 from the VM at 67 ms: twice the binds for a round trip
+thirty times shorter. A bind at 32 members took 645 ms at the median,
+some three hundred round trips. The transactions of all members touch
+the counter item. DynamoDB commits about 30 of them per second, with 3
+writes each, cancels the ones that raced, 36 to 46 percent of the
+attempts, and each loser reads the counter and tries again. More
+members means more cancelled transactions, so 128 members get 22 binds
+per second and a median bind of 11 seconds. This is the number the
+second review asked for (docs/plan-evidence.md): the write path of today
+sustains about 50 binds per second per resource, from anywhere, and the
+counter item in the transaction is why. ADR 0025 takes the counter out
+of the transaction; issue #290 measures what one item sustains without
+it, before any of its code.
+
+**At 10,000 devices the rate is the same and the conflicts are gone.**
+The claims rarely pick the same device from a pool of 10,000, so a
+transaction carries 6.5 writes, and the rate stays at the ceiling: 48
+to 58 binds per second at 32 members, 21 at 128. The errors of the two
+32 member runs are one member's watch cache built again during the
+run, with the message `storage is (re)initializing`; issue #298 has the
+cause to find. The bench of 3d388b1 retried the list in a loop during
+the outage and counted every try, 13 million in under a second; the
+bench of 410a4f3 waits 10 ms after a failed list, and counted 6,388 in
+the same event.
+
+The watch lag at the median is 90 to 105 ms with 32 members or more,
+half the poll interval, now that the round trip is gone from it; at 2
+members, with few writes, 19 ms.
+
+### Same round trip (#295)
+
+The etcd rows above come from an etcd on the VM, under 1 ms away, and
+the DynamoDB rows from a table 20 to 67 ms away. For a comparison at
+one distance, `ec2 up` starts an etcd (3.6.14, fsync on) on the
+instance in eu-west-1, and `devbox run scale` ran from the VM against
+it and against the table in the same minutes. TCP connect from the VM
+to DynamoDB: 40 ms. The connect time to the instance was not measured;
+the median bind on etcd at 2 members, 21 ms, bounds its round trip at
+about 20 ms, so the instance was nearer than the table's endpoint by
+about half. 20 seconds per run, 8 claims per member.
+
+| Date | Commit | Store, connect | Members | Devices | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Writes/tx | Errors |
+|------|--------|----------------|--------:|--------:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|----------:|-------:|
+| 2026-11-10 | 3d388b1 | etcd in eu-west-1, about 20 ms | 2 | 16 | 162.1 | 32.8 | 21.1 | 28.5 | 19.0 | 27.0 | 159.6 | 0.2 | 3.0 | - | - | 0 |
+| 2026-11-10 | 3d388b1 | etcd in eu-west-1, about 20 ms | 8 | 64 | 560.8 | 33.7 | 23.2 | 32.3 | 22.3 | 31.9 | 163.6 | 0.4 | 4.4 | - | - | 0 |
+| 2026-11-10 | 3d388b1 | etcd in eu-west-1, about 20 ms | 32 | 256 | 695.7 | 33.2 | 40.5 | 293.9 | 46.6 | 1089.0 | 165.4 | 36.1 | 2157.5 | - | - | 0 |
+| 2026-11-10 | 3d388b1 | DynamoDB eu-west-1, 40 ms | 2 | 16 | 2.0 | 44.9 | 380.4 | 39768.4 | 40.5 | 80.2 | 122.8 | 47.2 | 195.3 | 13.2 | 1.5 | 0 |
+| 2026-11-10 | 410a4f3 | DynamoDB eu-west-1, 41 ms | 2 | 16 | 15.5 | 40.7 | 188.4 | 816.8 | 42.0 | 79.0 | 122.1 | 49.3 | 198.4 | 61.4 | 1.8 | 0 |
+| 2026-11-10 | 3d388b1 | DynamoDB eu-west-1, 40 ms | 8 | 64 | 28.5 | 45.6 | 436.4 | 2275.4 | 45.3 | 130.5 | 128.7 | 79.8 | 230.4 | 43.4 | 2.8 | 0 |
+| 2026-11-10 | 3d388b1 | DynamoDB eu-west-1, 40 ms | 32 | 256 | 26.5 | 49.5 | 1746.2 | 7344.9 | 48.4 | 369.6 | 228.1 | 114.8 | 237.2 | 22.2 | 3.0 | 0 |
+
+**At one distance, etcd gives twenty times the binds.** 561 binds per
+second at 8 members and 696 at 32 on etcd, against 28 and 27 on
+DynamoDB from the same VM in the same minutes. A bind on etcd takes one
+round trip at the median, 21 to 40 ms, and the writes of all members
+are in flight at once; on DynamoDB it takes 436 to 1746 ms, the queue
+on the counter item. The difference in distance, about 20 ms, explains
+none of it: the rows in the region above, at 2 ms, give the same 50
+binds per second. The first DynamoDB row at 2 members, 2 binds per
+second with a bind of 40 seconds at p99, ran right after the 128 member
+run at 10,000 devices in the region; the run again a few minutes later
+gave 15.5, the rate of the earlier rows. Both rows stay on the page.
+
 ### Three regions, one client
 
 The default series from the VM against a table in each region, 20

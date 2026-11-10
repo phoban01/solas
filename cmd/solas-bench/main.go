@@ -669,7 +669,15 @@ func claimLoop(ctx context.Context, stop <-chan struct{}, m *member, claim int, 
 		from := time.Now()
 		devices, _, err := m.list(ctx)
 		if err != nil {
+			// A list fails for a while when the watch cache of the member
+			// is being built again: wait, so the errors count the time
+			// and not the speed of this loop.
 			st.fail(ctx, err)
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
 			continue
 		}
 		st.listed(time.Since(from))
