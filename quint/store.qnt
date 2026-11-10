@@ -72,6 +72,14 @@ module store {
     },
   }
 
+  // A server may use the last counter value it read or issued, without a
+  // new read, spec 2.3. A stale value fails the counter condition and the
+  // store does not change; the server then reads and writes.
+  action writeGuess = {
+    nondet c = 0.to(MAXW).filter(v => v <= counter).oneOf()
+    if (c == counter) write else all { counter' = counter, log' = log, w' = w, l' = l }
+  }
+
   // DynamoDB deletes an expired event, late and in any order, spec 4.1.
   action expire = all {
     log.size() > 0,
@@ -163,7 +171,7 @@ module store {
       l' = { ...l, phase: 0 },
   }
 
-  action step = any { write, batchWrite, expire, pollRead, pollHint, pollQuery, listRead, listQuery, listCheck }
+  action step = any { write, writeGuess, batchWrite, expire, pollRead, pollHint, pollQuery, listRead, listQuery, listCheck }
 
   // Delivered versions strictly increase, spec 3.2 and 4.2.
   val monotonicRV = w.ordered

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -151,10 +152,18 @@ func TestCommitConcurrentWritersHaveNoGaps(t *testing.T) {
 	}
 }
 
-// countingAPI counts the transactions the store sends.
+// countingAPI counts the transactions the store sends and the items it
+// reads. Between two commits with no watch and no list, every read is a
+// counter read.
 type countingAPI struct {
 	API
 	transactions atomic.Int64
+	reads        atomic.Int64
+}
+
+func (c *countingAPI) GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	c.reads.Add(1)
+	return c.API.GetItem(ctx, in, opts...)
 }
 
 func (c *countingAPI) TransactWriteItems(ctx context.Context, in *dynamodb.TransactWriteItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
@@ -231,5 +240,72 @@ func TestCommitBatchesConcurrentWrites(t *testing.T) {
 	}
 	if evs := eventVersions(t, s); len(evs) != 2+writers {
 		t.Errorf("event log has %d events, want %d", len(evs), 2+writers)
+	}
+}
+
+//= spec/solas.md#2-3-writes
+//= type=test
+//# The server MAY use the last counter value that it read or issued as that
+//# value, without a new read.
+
+//= spec/solas.md#2-3-writes
+//= type=test
+//# A wrong value fails only the counter condition, so the retry below reads
+//# the counter, and the writes keep their order.
+
+// A server that writes alone commits without a counter read. After a
+// write by another server, its guess misses, and it reads, retries, and
+// gets the version after the other's. The next batch reads too, once,
+// and then the server guesses again.
+func TestCommitCounterGuess(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	c := &countingAPI{API: s.client}
+	s.client = c
+	other, err := newStore(Config{Client: c.API, Table: s.table, PollInterval: time.Hour, ProgressInterval: time.Hour},
+		codec, newPod, newPodList, "/", "/pods/", testGR)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.commit(ctx, write{sk: "/a", action: actCreate, value: []byte("1")}); err != nil {
+		t.Fatal(err)
+	}
+	c.reads.Store(0)
+	rv, err := s.commit(ctx, write{sk: "/b", action: actCreate, value: []byte("1")})
+	if err != nil || rv != 3 {
+		t.Fatalf("second create = %d, %v; want 3, nil", rv, err)
+	}
+	if n := c.reads.Load(); n != 0 {
+		t.Errorf("the second commit read the counter %d times, want a guess with no read", n)
+	}
+
+	if rv, err := other.commit(ctx, write{sk: "/c", action: actCreate, value: []byte("1")}); err != nil || rv != 4 {
+		t.Fatalf("other's create = %d, %v; want 4, nil", rv, err)
+	}
+	c.reads.Store(0)
+	rv, err = s.commit(ctx, write{sk: "/d", action: actCreate, value: []byte("1")})
+	if err != nil || rv != 5 {
+		t.Fatalf("create after the other's = %d, %v; want 5, nil", rv, err)
+	}
+	if n := c.reads.Load(); n != 1 {
+		t.Errorf("the commit after a miss read the counter %d times, want 1", n)
+	}
+	c.reads.Store(0)
+	if rv, err := s.commit(ctx, write{sk: "/e", action: actCreate, value: []byte("1")}); err != nil || rv != 6 {
+		t.Fatalf("create in the holdoff = %d, %v; want 6, nil", rv, err)
+	}
+	if n := c.reads.Load(); n != 1 {
+		t.Errorf("the commit in the holdoff read the counter %d times, want 1", n)
+	}
+	c.reads.Store(0)
+	if rv, err := s.commit(ctx, write{sk: "/f", action: actCreate, value: []byte("1")}); err != nil || rv != 7 {
+		t.Fatalf("create after the holdoff = %d, %v; want 7, nil", rv, err)
+	}
+	if n := c.reads.Load(); n != 0 {
+		t.Errorf("the commit after the holdoff read the counter %d times, want a guess", n)
+	}
+	if got := eventVersions(t, s); fmt.Sprint(got) != "[1 2 3 4 5 6 7]" {
+		t.Errorf("event log = %v, want [1 2 3 4 5 6 7]", got)
 	}
 }

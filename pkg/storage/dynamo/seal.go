@@ -119,6 +119,7 @@ func (s *store) readCounterSealed(ctx context.Context) (uint64, bool, error) {
 		if out.Item != nil {
 			n, err := numAttr(out.Item, attrN)
 			_, sealed := out.Item[attrSealed]
+			s.batch.noteCounter(n)
 			return n, sealed, err
 		}
 		if err := s.initCounter(ctx); err != nil {

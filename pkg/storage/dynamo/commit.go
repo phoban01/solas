@@ -72,7 +72,54 @@ type batcher struct {
 	mu      sync.Mutex
 	queue   []*pending
 	running bool
+	// known is the last counter value that this server read or issued,
+	// for the guess of spec 2.3. Every counter read raises it, so the
+	// polls of the watchers keep it within a poll interval of the store.
+	known atomic.Uint64
+	// The committer alone uses these. misses counts the guesses in a row
+	// that missed, and holdoff the batches that read before the next
+	// guess: one after the first miss, then double for each miss after.
+	misses, holdoff int
 }
+
+// noteCounter records a counter value that the server read or issued.
+func (b *batcher) noteCounter(n uint64) {
+	for {
+		old := b.known.Load()
+		if n <= old || b.known.CompareAndSwap(old, n) {
+			return
+		}
+	}
+}
+
+//= spec/solas.md#2-3-writes
+//# The server MAY use the last counter value that it read or issued as that
+//# value, without a new read.
+
+// guess returns the counter value to try without a read, on the first
+// attempt of a batch, when the server knows one and the last guesses did
+// not miss. A guessed value is never above the counter, so a guess that
+// is wrong fails the counter condition and nothing else.
+func (b *batcher) guess(attempt int) (uint64, bool) {
+	if attempt > 0 {
+		return 0, false
+	}
+	if b.holdoff > 0 {
+		b.holdoff--
+		return 0, false
+	}
+	n := b.known.Load()
+	return n, n > 0
+}
+
+// missed records a guess that failed the counter condition.
+func (b *batcher) missed() {
+	b.misses++
+	b.holdoff = 1 << min(b.misses-1, 6)
+}
+
+// hit records a guess that committed.
+func (b *batcher) hit() { b.misses = 0 }
 
 //= spec/solas.md#2-3-writes
 //# A call MAY carry several writes of one resource that arrived at the
@@ -141,16 +188,24 @@ func (s *store) commitBatch(batch []*pending) {
 		}
 	}
 	for attempt := 0; len(batch) > 0; attempt++ {
-		n, sealed, err := s.readCounterSealed(ctx)
-		if err != nil {
-			fail(err)
-			return
-		}
-		//= spec/solas.md#12-1-seal
-		//# A sealed store MUST reject every write.
-		if sealed {
-			fail(errSealed(s.resource))
-			return
+		n, guessed := s.batch.guess(attempt)
+		if !guessed {
+			var sealed bool
+			var err error
+			n, sealed, err = s.readCounterSealed(ctx)
+			if err != nil {
+				fail(err)
+				return
+			}
+			//= spec/solas.md#12-1-seal
+			//# A sealed store MUST reject every write.
+			//
+			// A guess on a sealed store fails the counter condition, which
+			// carries the seal check, and the read of the retry lands here.
+			if sealed {
+				fail(errSealed(s.resource))
+				return
+			}
 		}
 		//= spec/solas.md#3-1-issue
 		//# Each write MUST get a resource version exactly one more than the
@@ -161,18 +216,27 @@ func (s *store) commitBatch(batch []*pending) {
 		//= spec/solas.md#2-3-writes
 		//# The writes of a call MUST get the versions `n + 1` to `n + k`, in the
 		//# order of the call.
-		_, err = s.client.TransactWriteItems(ctx, s.transaction(batch, n))
+		_, err := s.client.TransactWriteItems(ctx, s.transaction(batch, n))
 		if err == nil {
 			batchStats.transactions.Add(1)
 			batchStats.writes.Add(int64(len(batch)))
-		}
-		if err == nil {
+			s.batch.noteCounter(n + uint64(len(batch)))
+			if guessed {
+				s.batch.hit()
+			}
 			for i, p := range batch {
 				p.done <- result{rv: n + 1 + uint64(i)}
 			}
 			return
 		}
 		conflicts, retry := classify(err, len(batch))
+		if guessed && retry && len(conflicts) == 0 {
+			//= spec/solas.md#2-3-writes
+			//# A wrong value fails only the counter condition, so the retry below reads
+			//# the counter, and the writes keep their order.
+			s.batch.missed()
+			continue
+		}
 		if len(conflicts) > 0 {
 			//= spec/solas.md#2-3-writes
 			//# The other writes of the call MUST retry in a new call.

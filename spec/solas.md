@@ -94,6 +94,11 @@ server together.
 Let `k` be the number of writes in the call.
 The counter update MUST set `n` to `n + k` on condition that `n` still
 has the value that the server read.
+The server MAY use the last counter value that it read or issued as that
+value, without a new read.
+A wrong value fails only the counter condition, so the retry below reads
+the counter, and the writes keep their order.
+A server that writes alone then pays one round trip per transaction.
 The writes of a call MUST get the versions `n + 1` to `n + k`, in the
 order of the call.
 DynamoDB serializes the transactions that touch one item, so one

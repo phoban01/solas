@@ -38,6 +38,10 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MAY,implementation,test]: server together.
     TEXT[!MUST,implementation]: The counter update MUST set `n` to `n + k` on condition that `n` still
     TEXT[!MUST,implementation]: has the value that the server read.
+    TEXT[!MAY,implementation,test]: The server MAY use the last counter value that it read or issued as that
+    TEXT[!MAY,implementation,test]: value, without a new read.
+    TEXT[implementation,test]: A wrong value fails only the counter condition, so the retry below reads
+    TEXT[implementation,test]: the counter, and the writes keep their order.
     TEXT[!MUST,implementation,test]: The writes of a call MUST get the versions `n + 1` to `n + k`, in the
     TEXT[!MUST,implementation,test]: order of the call.
     TEXT[!MUST,implementation]: For a create, the object action MUST be a put on condition that the
