@@ -288,7 +288,35 @@ closest measure of it.
 The e2e reclaim scene shows the gatekeeper at work in a cluster: the
 stale holder's deploy after a reclaim is rejected with 403 and never
 reaches the actuator (`test/e2e/mesh_test.go`).
-## Soak
+
+## Bind burst
+
+Method: `scripts/burst.sh <workers> [claims]`, issue #268. One k3d
+cluster gets 50 devices and then 50 claims at once, and the script
+measures the time until every claim is Bound, with the claim workers of
+`--claim-workers`. Each bind is a conditional write, spec 6.3, and the
+store carries the writes of a server that arrive together in one
+transaction, spec 2.3, so several workers share a round trip. The lease
+is 10 seconds, as in the demo.
+
+| Date | Commit | Store | Workers | Claims | Seconds to all Bound | Binds/s |
+|------|--------|-------|--------:|-------:|---------------------:|--------:|
+| 2026-11-09 | cde2cd8 | dynamodb-local | 1 | 50 | 5.7 | 8.8 |
+| 2026-11-09 | cde2cd8 | dynamodb-local | 4 | 50 | 2.3 | 21.7 |
+| 2026-11-10 | aa5d7c1 | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 8.6 | 5.8 |
+| 2026-11-10 | aa5d7c1 | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 6.9 | 7.2 |
+
+With one worker a cluster binds one claim per reconcile, list and write
+in turn. Four workers bind two and a half times as fast on a local
+store, where the round trip is short and the gain is the parallel lists
+and writes. On the real table the gain is a quarter: each bind still
+pays a consistent list, which waits for the cache to catch up with the
+counter through a progress poll, and then a transaction, and the four
+workers' writes share a transaction only when they arrive in the same
+window. A cluster's bind rate on a real table is bound by those round
+trips, and a burst of 50 claims binds in 7 to 9 seconds either way.
+The rows say that #268 helps, and that the next gain is in the list
+before the bind, not in more workers.
 
 Method: `devbox run soak`, the test `TestSoak` in
 `test/e2e/soak_test.go`. Two clusters share one store and a device
