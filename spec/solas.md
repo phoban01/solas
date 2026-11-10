@@ -94,6 +94,11 @@ server together.
 Let `k` be the number of writes in the call.
 The counter update MUST set `n` to `n + k` on condition that `n` still
 has the value that the server read.
+The server MAY use the last counter value that it read or issued as that
+value, without a new read.
+A wrong value fails only the counter condition, so the retry below reads
+the counter, and the writes keep their order.
+A server that writes alone then pays one round trip per transaction.
 The writes of a call MUST get the versions `n + 1` to `n + k`, in the
 order of the call.
 DynamoDB serializes the transactions that touch one item, so one
@@ -271,6 +276,9 @@ If `c` is greater than `last`, the poll MUST query the event log for the
 versions from `last + 1` to `c`.
 Every write up to `c` has committed before the query starts, so a
 complete log holds each of these versions.
+A poll MAY use a counter value from an earlier read as `c`, instead of
+a read of its own.
+If that value is not above `last`, the poll returns no events.
 
 The server SHOULD poll each resource at least once each second.
 The server SHOULD NOT poll a resource more often than every 100
@@ -290,6 +298,10 @@ The API server library serves a consistent list from the cache only for
 a store that answers progress requests.
 The DynamoDB store declares that it does, and the cache reads the
 counter once, asks for progress, and serves the list from memory.
+When the server reads the counter for a consistent list, it SHOULD poll
+with that value at once and then send a bookmark.
+So the cache reaches the version after one query, with no progress
+request and no second counter read.
 A list that reaches the store reads the counter twice around a query,
 section 2.4, and it costs one read per object.
 
@@ -1078,6 +1090,10 @@ A `MemberPolicy` MUST have the name of the member that it limits.
 `spec.bindsPerMinute` and `spec.preemptionsPerMinute` are rates.
 A member with no `MemberPolicy` has no limit.
 A member MUST NOT hold more devices than its `maxDevices`.
+The server SHOULD read the policy of a member from its watch cache, so
+a bind costs no round trip to the store for it.
+A policy applies to the binds that start after the server has seen it,
+which is within one poll of the store, section 4.2.
 
 ### 15.2. Usage set
 

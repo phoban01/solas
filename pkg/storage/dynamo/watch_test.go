@@ -153,3 +153,53 @@ func TestProgressRequestPollsFirst(t *testing.T) {
 		}
 	}
 }
+
+//= spec/solas.md#4-2-poll
+//= type=test
+//# When the server reads the counter for a consistent list, it SHOULD poll
+//# with that value at once and then send a bookmark.
+
+// TestCurrentVersionReadPollsAtOnce: a write lands, the store reads the
+// counter as the watch cache does before a consistent list, and the
+// watch delivers the write and a bookmark with no poll of its own.
+func TestCurrentVersionReadPollsAtOnce(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	// Only a hinted poll can deliver within the test.
+	s.pollInterval = time.Hour
+	s.progressInterval = time.Hour
+	createPods(t, s, "a") // version 2
+	w, err := s.Watch(ctx, "/pods/", storage.ListOptions{ResourceVersion: "2", Recursive: true,
+		Predicate: storage.Everything, ProgressNotify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	for i := range 3 {
+		createPods(t, s, fmt.Sprintf("p%d", i)) // version 3 + i
+		written := uint64(3 + i)
+		c, err := s.GetCurrentResourceVersion(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c != written {
+			t.Fatalf("current version = %d, want %d", c, written)
+		}
+		e := nextEvent(t, w)
+		if e.Type != watch.Added {
+			t.Fatalf("event after the version read = %s, want the ADDED of the hinted poll", e.Type)
+		}
+		e = nextEvent(t, w)
+		if e.Type != watch.Bookmark {
+			t.Fatalf("event after the ADDED = %s, want a bookmark", e.Type)
+		}
+		rv, err := s.versioner.ObjectResourceVersion(e.Object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rv < written {
+			t.Fatalf("bookmark after the version read = %d, want at least %d", rv, written)
+		}
+	}
+}

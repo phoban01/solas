@@ -38,6 +38,10 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MAY,implementation,test]: server together.
     TEXT[!MUST,implementation]: The counter update MUST set `n` to `n + k` on condition that `n` still
     TEXT[!MUST,implementation]: has the value that the server read.
+    TEXT[!MAY,implementation,test]: The server MAY use the last counter value that it read or issued as that
+    TEXT[!MAY,implementation,test]: value, without a new read.
+    TEXT[implementation,test]: A wrong value fails only the counter condition, so the retry below reads
+    TEXT[implementation,test]: the counter, and the writes keep their order.
     TEXT[!MUST,implementation,test]: The writes of a call MUST get the versions `n + 1` to `n + k`, in the
     TEXT[!MUST,implementation,test]: order of the call.
     TEXT[!MUST,implementation]: For a create, the object action MUST be a put on condition that the
@@ -145,6 +149,9 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: If `c` equals `last`, the poll MUST return no events.
     TEXT[!MUST,implementation]: If `c` is greater than `last`, the poll MUST query the event log for the
     TEXT[!MUST,implementation]: versions from `last + 1` to `c`.
+    TEXT[!MAY,implementation]: A poll MAY use a counter value from an earlier read as `c`, instead of
+    TEXT[!MAY,implementation]: a read of its own.
+    TEXT[implementation]: If that value is not above `last`, the poll returns no events.
     TEXT[!SHOULD,implementation]: The server SHOULD poll each resource at least once each second.
     TEXT[!SHOULD,implementation]: The server SHOULD NOT poll a resource more often than every 100
     TEXT[!SHOULD,implementation]: milliseconds.
@@ -155,6 +162,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: the bookmark.
     TEXT[!MUST,implementation,test]: A consistent list through the API server MUST come from the watch cache
     TEXT[!MUST,implementation,test]: once the cache has reached the counter value.
+    TEXT[!SHOULD,implementation,test]: When the server reads the counter for a consistent list, it SHOULD poll
+    TEXT[!SHOULD,implementation,test]: with that value at once and then send a bookmark.
 
   SECTION: [4.3. Gaps](#4-3-gaps)
     TEXT[!MUST,implementation,test]: If the query result does not hold each version from `last + 1` to `c`
@@ -668,6 +677,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
   SECTION: [15.1. Policy](#15-1-policy)
     TEXT[!MUST,implementation,test]: A `MemberPolicy` MUST have the name of the member that it limits.
     TEXT[!MUST,test]: A member MUST NOT hold more devices than its `maxDevices`.
+    TEXT[!SHOULD,implementation]: The server SHOULD read the policy of a member from its watch cache, so
+    TEXT[!SHOULD,implementation]: a bind costs no round trip to the store for it.
 
   SECTION: [15.2. Usage set](#15-2-usage-set)
     TEXT[!MUST]: The server MUST keep a usage set for each limited member: the devices

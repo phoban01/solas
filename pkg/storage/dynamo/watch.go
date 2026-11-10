@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -43,6 +44,10 @@ type watcher struct {
 	progressNotify bool
 	// progress asks the watcher to send a bookmark, see RequestWatchProgress.
 	progress chan struct{}
+	// hint wakes the poller with a counter value that the store read for a
+	// consistent list, see watchers.hint. hinted holds the highest value.
+	hint   chan struct{}
+	hinted atomic.Uint64
 }
 
 func (w *watcher) Stop()                          { w.cancel() }
@@ -80,6 +85,28 @@ func (ws *watchers) requestProgress() {
 	}
 }
 
+// hint gives every watcher a counter value that the store has just read,
+// so the next poll can use it without a read of its own, spec 4.2. The
+// watch cache reads the counter before a consistent list and then waits
+// for the cache to reach it; the hinted poll gets it there after one
+// query, with no progress request.
+func (ws *watchers) hint(c uint64) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	for w := range ws.set {
+		for {
+			old := w.hinted.Load()
+			if old >= c || w.hinted.CompareAndSwap(old, c) {
+				break
+			}
+		}
+		select {
+		case w.hint <- struct{}{}:
+		default:
+		}
+	}
+}
+
 func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions) (watch.Interface, error) {
 	sk, err := s.sortKey(key, opts.Recursive)
 	if err != nil {
@@ -109,6 +136,7 @@ func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions)
 		pred:           opts.Predicate,
 		progressNotify: opts.ProgressNotify,
 		progress:       make(chan struct{}, 1),
+		hint:           make(chan struct{}, 1),
 	}
 	s.watchers.add(w)
 	utilflowcontrol.WatchInitialized(ctx)
@@ -175,35 +203,49 @@ func (w *watcher) run(start uint64, initialEvents, endBookmark bool) {
 		progress = pt.C
 	}
 	defer t.Stop()
+	// The first poll runs at once, so a watch from a version delivers
+	// what came after it without a wait for the ticker.
+	last, ok := w.poll(last)
+	if !ok {
+		return
+	}
 	//= spec/solas.md#4-2-poll
 	//# When a watcher asks for progress, the server MUST poll before it sends
 	//# the bookmark.
 	//
-	// bookmark is set by a progress request or by the progress ticker. The
-	// poll at the top of the loop runs first, so the bookmark carries a
-	// version at or above the counter at the time of the request, which is
-	// what a consistent list from the watch cache waits for.
-	bookmark := false
+	// Each turn of the loop waits for a reason to poll, polls, and then
+	// sends a bookmark when the reason was a progress request, the progress
+	// ticker, or a hint. The poll runs before the bookmark, so the bookmark
+	// carries a version at or above the counter at the time of the request,
+	// which is what a consistent list from the watch cache waits for.
 	for {
-		next, ok := w.poll(last)
-		if !ok {
-			return
-		}
-		last = next
-		if bookmark {
-			bookmark = false
-			if !w.sendBookmark(last, false) {
-				return
-			}
-		}
+		var hinted uint64
+		bookmark := false
 		select {
 		case <-w.ctx.Done():
 			return
+		case <-w.hint:
+			//= spec/solas.md#4-2-poll
+			//# A poll MAY use a counter value from an earlier read as `c`, instead of
+			//# a read of its own.
+			hinted = w.hinted.Load()
+			bookmark = w.progressNotify
 		case <-w.progress:
 			bookmark = w.progressNotify
 		case <-progress:
 			bookmark = true
 		case <-t.C:
+		}
+		if hinted > 0 {
+			last, ok = w.pollAt(last, hinted)
+		} else {
+			last, ok = w.poll(last)
+		}
+		if !ok {
+			return
+		}
+		if bookmark && !w.sendBookmark(last, false) {
+			return
 		}
 	}
 }
@@ -273,9 +315,18 @@ func (w *watcher) poll(last uint64) (uint64, bool) {
 		}
 		return 0, false
 	}
+	return w.pollAt(last, c)
+}
+
+// pollAt delivers the events after last up to c, a counter value that
+// the store has read, and returns the new last version.
+func (w *watcher) pollAt(last, c uint64) (uint64, bool) {
 	if c <= last {
 		//= spec/solas.md#4-2-poll
 		//# If `c` equals `last`, the poll MUST return no events.
+
+		//= spec/solas.md#4-2-poll
+		//# If that value is not above `last`, the poll returns no events.
 		return last, true
 	}
 	//= spec/solas.md#4-2-poll

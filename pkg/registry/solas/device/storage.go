@@ -148,52 +148,58 @@ func (r *StatusREST) Update(ctx context.Context, name string, objInfo rest.Updat
 	createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc,
 	forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
 	// Status updates never create a device.
-	update := func() (runtime.Object, bool, error) {
+	if r.usage == nil || r.policies == nil {
 		return r.store.Update(ctx, name, objInfo, createValidation, updateValidation, false, options)
 	}
-	if r.usage == nil || r.policies == nil {
-		return update()
-	}
-	cur, err := r.store.Get(ctx, name, &metav1.GetOptions{})
-	if err != nil {
-		return update()
-	}
-	old := cur.(*solas.Device)
-	next, err := objInfo.UpdatedObject(ctx, old)
-	if err != nil {
-		return update()
-	}
-	oldRef, newRef := old.Status.ClaimRef, next.(*solas.Device).Status.ClaimRef
-	// A bind of a free device, or a bind against an offer from another member.
-	if newRef != nil && (oldRef == nil || oldRef.Member != newRef.Member) {
-		p, err := r.policies(ctx, newRef.Member)
-		if err != nil {
-			return nil, false, err
+	// The checks run inside the store's update, on the current object that
+	// the store hands to the transform, so the request reads the device
+	// once, and from the watch cache when the cache holds it. The store
+	// runs the transform again when its write finds a newer object; a
+	// reservation made in the first run stands, and a failed device write
+	// leaves it for the cleanup.
+	var oldRef, newRef *solas.ClaimRef
+	admitted, taken := false, false
+	limited := rest.WrapUpdatedObjectInfo(objInfo, func(ctx context.Context, newObj, oldObj runtime.Object) (runtime.Object, error) {
+		old, ok := oldObj.(*solas.Device)
+		next, ok2 := newObj.(*solas.Device)
+		if !ok || !ok2 {
+			return newObj, nil
 		}
-		//= spec/solas.md#15-2-usage-set
-		//# The device write MUST follow in the same request.
-		//
-		// A failed device write leaves the entry. The cleanup takes it out
-		// after a grace, spec 15.3: removing it here could remove the entry
-		// of a second bind of the same device that is still in flight.
-		if p != nil && (p.Spec.MaxDevices != nil || p.Spec.BindsPerMinute != nil) {
-			if err := r.usage.Admit(ctx, newRef.Member, name, p.Spec.MaxDevices, p.Spec.BindsPerMinute); err != nil {
-				return nil, false, err
+		oldRef, newRef = old.Status.ClaimRef, next.Status.ClaimRef
+		// A bind of a free device, or a bind against an offer from another member.
+		if newRef != nil && (oldRef == nil || oldRef.Member != newRef.Member) && !admitted {
+			p, err := r.policies(ctx, newRef.Member)
+			if err != nil {
+				return nil, err
 			}
-		}
-	}
-	if req := next.(*solas.Device).Status.Preemption; req != nil && (old.Status.Preemption == nil || old.Status.Preemption.Claim.UID != req.Claim.UID) {
-		p, err := r.policies(ctx, req.Claim.Member)
-		if err != nil {
-			return nil, false, err
-		}
-		if p != nil && p.Spec.PreemptionsPerMinute != nil {
-			if err := r.usage.TakePreemption(ctx, req.Claim.Member, *p.Spec.PreemptionsPerMinute); err != nil {
-				return nil, false, err
+			//= spec/solas.md#15-2-usage-set
+			//# The device write MUST follow in the same request.
+			//
+			// A failed device write leaves the entry. The cleanup takes it out
+			// after a grace, spec 15.3: removing it here could remove the entry
+			// of a second bind of the same device that is still in flight.
+			if p != nil && (p.Spec.MaxDevices != nil || p.Spec.BindsPerMinute != nil) {
+				if err := r.usage.Admit(ctx, newRef.Member, name, p.Spec.MaxDevices, p.Spec.BindsPerMinute); err != nil {
+					return nil, err
+				}
 			}
+			admitted = true
 		}
-	}
-	out, created, err := update()
+		if req := next.Status.Preemption; req != nil && (old.Status.Preemption == nil || old.Status.Preemption.Claim.UID != req.Claim.UID) && !taken {
+			p, err := r.policies(ctx, req.Claim.Member)
+			if err != nil {
+				return nil, err
+			}
+			if p != nil && p.Spec.PreemptionsPerMinute != nil {
+				if err := r.usage.TakePreemption(ctx, req.Claim.Member, *p.Spec.PreemptionsPerMinute); err != nil {
+					return nil, err
+				}
+			}
+			taken = true
+		}
+		return newObj, nil
+	})
+	out, created, err := r.store.Update(ctx, name, limited, createValidation, updateValidation, false, options)
 	if err == nil && oldRef != nil && (newRef == nil || newRef.Member != oldRef.Member) {
 		// A failure here leaves the entry for the cleanup.
 		_ = r.usage.Remove(ctx, oldRef.Member, name)

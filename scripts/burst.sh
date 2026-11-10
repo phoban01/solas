@@ -76,6 +76,25 @@ end=$(date +%s.%N)
 seconds=$(awk -v a="$start" -v b="$end" 'BEGIN { printf "%.1f", b - a }')
 rate=$(awk -v n="$claims" -v s="$seconds" 'BEGIN { if (s > 0) printf "%.1f", n / s; else print "inf" }')
 rm -f "$pool" "$burst"
+
+# With SOLAS_BURST_METRICS=<dir>, dump the metrics of the API server part
+# (apiserver.prom) and of the controller part (controller.prom) into the
+# directory, for scripts/metrics-summary.sh. The API server needs a token
+# that may read /metrics; the controller's metrics port has no auth.
+if [ -n "${SOLAS_BURST_METRICS:-}" ]; then
+  mkdir -p "$SOLAS_BURST_METRICS"
+  kubectl create clusterrole solas-metrics --non-resource-url=/metrics --verb=get >/dev/null 2>&1 || true
+  kubectl create clusterrolebinding solas-metrics --clusterrole=solas-metrics \
+    --serviceaccount=solas-system:default >/dev/null 2>&1 || true
+  token=$(kubectl -n solas-system create token default)
+  pod=$(kubectl -n solas-system get pod -l app=solas -o jsonpath='{.items[0].metadata.name}')
+  kubectl -n solas-system port-forward "pod/$pod" 18443:8443 18080:8080 >/dev/null 2>&1 &
+  pf=$!
+  sleep 2
+  curl -sk -H "Authorization: Bearer $token" https://127.0.0.1:18443/metrics >"$SOLAS_BURST_METRICS/apiserver.prom" || true
+  curl -s http://127.0.0.1:18080/metrics >"$SOLAS_BURST_METRICS/controller.prom" || true
+  kill "$pf" 2>/dev/null || true
+fi
 if [ "$bound" -lt "$claims" ]; then
   echo "burst: only $bound of $claims claims Bound after ${seconds}s" >&2
   exit 1
