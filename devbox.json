@@ -38,6 +38,7 @@
       "burst": "scripts/burst.sh",
       "smoke": "scripts/smoke.sh",
       "mbt": "scripts/mbt.sh",
+      "quint-check": "scripts/quint-check.sh",
       "pivot-smoke": "scripts/pivot-smoke.sh",
       "demo": "demo/k3d/demo.sh",
       "demo-down": "demo/k3d/down.sh",
@@ -47,15 +48,7 @@
       "duvet-install": "scripts/duvet-install.sh",
       "duvet": "rm -rf .duvet/requirements && duvet report --ci",
       "duvet-report": "rm -rf .duvet/requirements && duvet report",
-      "verify": [
-        "hack/verify-codegen.sh",
-        "scripts/kind-check.sh",
-        "scripts/test.sh",
-        "scripts/quint-check.sh",
-        "scripts/mbt.sh",
-        "MBT_STORE=etcd scripts/mbt.sh",
-        "rm -rf .duvet/requirements && duvet report --ci"
-      ]
+      "verify": "scripts/verify.sh"
     }
   }
 }

@@ -31,7 +31,11 @@ LocalStack now needs an auth token, so the project uses amazon/dynamodb-local
 - End-to-end tests use `sigs.k8s.io/e2e-framework` against k3d clusters,
   with plain `testing`. No Ginkgo. No envtest. `devbox run e2e`.
 - Model-based tests replay Quint traces against the real API server.
-- `devbox run verify` runs unit tests, Quint checks, and the Duvet gate.
+- `devbox run verify` runs unit tests, Quint checks, the model-based
+  tests, and the Duvet gate, and prints the time of each step. The Quint
+  checks and the model-based tests skip when their inputs are unchanged
+  since a green run (stamps under `.cache/verify`); `VERIFY_FORCE=1`
+  runs them all the same.
 
 ## Tooling
 
