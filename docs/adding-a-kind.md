@@ -26,6 +26,13 @@ the holder rules too. Today those rules live in the Device registry
 (`strategy.go` and `guard.go`). Issue #264 makes them a primitive that a
 kind opts in to.
 
+A kind that reads another kind, as the sweeper reads Members after
+Devices, gets no common snapshot of the two: the lists are two
+snapshots at two versions (ADR 0003, "Order across resources"). It
+lists the kind that holds the reference first, then the kind it names,
+and compares by UID, spec 8.3. Its spec section names the Quint
+invariant that checks its rule, as spec 8.3 names `leaseSafety`.
+
 ## What a kind never touches
 
 - `pkg/storage/**`: the DynamoDB store, the storage guard, and the URL.

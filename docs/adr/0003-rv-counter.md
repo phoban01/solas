@@ -66,11 +66,36 @@ kind that relates to another kind must do the same: a conditional write
 on the object it changes, and a causal order for what it reads first.
 Issue #264 gives the holder rules to any kind as a primitive.
 
-A single counter would give one order across kinds at the cost of one
-item for every write of the store. The scale rows of
+A single counter would give one order across kinds, and a common
+snapshot to a reader of two kinds, at the cost of one item for every
+write of the store. The scale rows of
 `docs/benchmarks.md` show what that item costs on dynamodb-local; a
 counter per resource spreads the load, and nothing in the protocol
 asks for more.
+
+What the argument leaves unsaid, from a reading of it on 2026-11-10:
+
+- A reader of two kinds gets no common snapshot. A list of Devices and
+  a list of Members are two snapshots at two versions, and the reader
+  cannot tell a Member that is gone from a Member that the second list
+  started too early to see. The sweeper's rule is the model: list the
+  kind that holds the reference first, then the kind it names, and
+  compare by UID, spec 8.3. A dashboard or a controller that reads two
+  kinds does the same.
+- The usage set rule is one way. Every held device has an entry in the
+  usage set of its member; an entry with no device is allowed and
+  expires, spec 15.2. The entry is a reservation, not an order.
+  `withinLimit` is checked in `quint/limits.qnt`, apart from the
+  invariants of `quint/solas.qnt`.
+- The rule for a new kind is a convention. `scripts/kind-check.sh`
+  checks that the core names no kind; it does not check how a kind
+  reads. `docs/adding-a-kind.md` states the rule, and a kind that reads
+  another kind names the Quint invariant that checks it.
+- The argument rests on the store contract of spec 2.5. `quint/store.qnt`
+  proves the contract for the store, and `quint/solas.qnt` assumes it.
+  ADR 0025 changes how a list reaches its snapshot, so issue #281
+  proves the contract again for that write path, with a negative model
+  where the list skips the settle wait.
 
 ## Amendment: batched writes (2026-11-09)
 

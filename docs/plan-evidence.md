@@ -40,6 +40,34 @@ need a correction before the plan:
 Issues #232 (etcd at start) and the M19 fault injection issues (#217 to
 #220) stay in M19 and run alongside.
 
+## The second review (2026-11-10)
+
+A second review read the rows of M20 to M23 and the proposal of ADR
+0025, and a reader of it checked the order argument of ADR 0003. Their
+points, and the evidence that answers each:
+
+| Point | Evidence to produce | Issue |
+|-------|---------------------|-------|
+| The ceiling of 27 binds per second comes from the VM at 67 ms, and a bind costs about one round trip. One row in the table's region says whether the ceiling is the store's or the distance, and it is cheaper than ADR 0025 | The 32 and 128 member rows from an EC2 instance in eu-west-1 | #243 |
+| ADR 0025 rests on an item update rate and a transaction rate that nothing measured | Rows for `UpdateItem` on one item and for transactions with no shared item, from the VM, before any code of ADR 0025 | #290 |
+| Whether the ceiling is enough is a fleet size question that no page answers | A "Fleet size" section in docs/scale.md: members, binds per minute, and held devices per store, from the rows | #291 |
+| ADR 0025 names what it adds, not what it gives up | ADR 0025 states the property it trades (commit order is version order, and the log has no hole), the rule for building it, and the fleet size of today's write path | #293 |
+| The two stores compare only at the same round trip | etcd rows from an etcd in the table's region, next to the DynamoDB rows of the same day | #295 |
+| The gatekeeper protects the calls that reach it; a fleet needs actuators that only it can reach, and no test proves that | A NetworkPolicy on the actuator and an e2e in which a direct call fails and the same call through the gatekeeper passes; ADR 0017 says what the gatekeeper does not protect | #294 |
+| The order argument of ADR 0003 holds for the rules that exist, and leaves three things unsaid: no common snapshot across kinds, the usage entry is a reservation, and the rule for a new kind is a convention | The three points in ADR 0003 and the rule in docs/adding-a-kind.md | #292 |
+| The argument rests on the store contract of spec 2.5, and ADR 0025 changes how a list reaches its snapshot | The store model with issue, commit, fence, and the settle wait, and a negative model where the list skips the wait | #281 |
+| The exclusion rule is Device-specific | The holder primitive, as planned | #264 |
+| Ownership and scoping are plan items | ADR 0022 built, and per-member credentials tested, as planned | #258, #259 |
+| No two-hour soak on DynamoDB | As planned | #246 |
+
+Two points of the review need no issue. The lag of a 200 ms poll is
+decided in ADR 0004 with the poll interval rows; what the poll costs
+under contention is the conflict rate, and every scale row carries it.
+And "commit order is version order" is a property that any design
+gives up to pass one sequencing point; the open question is the fleet
+size at which solas has to, and #291 and #293 put that number on the
+page.
+
 ## Principles
 
 1. **Spec first, then Quint, then Duvet**, as before. A protocol change
@@ -220,15 +248,15 @@ go back. What it lacks is evidence for each, and one rule.
 
 ## Order
 
-M22 first: it is local, it changes the numbers that M20 measures, and
-#237 removes most of the table reads before the DynamoDB runs cost
-anything. Then M20 and M21 in parallel: M20 is runs and rows, M21 is
-code. M23 after M21, because the deep soak runs through the gatekeeper.
-M24 after M20, because the partition per member changes the table
-layout, and the M20 rows should measure the layout that ships. M26
-after M24, because the move e2e should run on the layout that ships,
-and its rule on versions is small enough to land first. M25 last; it
-only collects.
+The second review changes the order. #243 first: it is one EC2 run and
+one row, and it says whether the ceiling of 27 binds per second is the
+store's or the VM's distance; #295 runs on the same instance. Then #290
+and #291 from the VM, and #293 from their rows. ADR 0025 goes ahead,
+#279 to #286, only when the in-region row stays under 100 binds per
+second at 8 members and the item row puts the item well above it;
+otherwise the write path of today stays, with its fleet size on the
+page. Then #264, M24 with #294, M26, and M25 last. #233 and #266 of M22
+stay open and run alongside.
 
 ## The cost of M20
 
