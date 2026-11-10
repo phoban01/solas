@@ -956,7 +956,19 @@ creation time of each object.
 The copy MUST NOT keep the resource version.
 The destination gives each object a new resource version.
 After the copy, the tool MUST verify that each object in the destination
-equals its source, except for the resource version.
+equals its source, except for the resource version and the epoch.
+After the verify, and before any cluster writes to the destination, the
+tool MUST move the destination to a new epoch, spec 13.1, with every
+resource version that it issues above every resource version of the
+source, spec 13.3.
+So a version or a token that the destination issues is above every one
+that the source issued, and a client that keeps a version of the source
+gets `410 Gone` from the destination, as after a restore.
+An etcd destination cannot raise its revision, so the tool MUST refuse
+an etcd destination whose revision is below the highest resource version
+of the source.
+The operator raises the revision first, with `etcdutl snapshot restore
+--bump-revision`.
 
 ### 12.3. A store that cannot be sealed
 

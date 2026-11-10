@@ -15,7 +15,7 @@ import (
 //= spec/solas.md#12-2-copy
 //= type=test
 //# After the copy, the tool MUST verify that each object in the destination
-//# equals its source, except for the resource version.
+//# equals its source, except for the resource version and the epoch.
 
 func TestVerify(t *testing.T) {
 	ctx := context.Background()
