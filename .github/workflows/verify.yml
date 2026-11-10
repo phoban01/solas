@@ -31,8 +31,13 @@ jobs:
           key: verify-stamps-${{ github.run_id }}
           restore-keys: verify-stamps-
 
+      # The Apalache verifies take 32 of the 42 minutes of a full run on
+      # this runner. They run on the development VM, where the stamps
+      # keep them to the models that changed; CI runs the rest.
       - name: Verify
         run: devbox run verify
+        env:
+          QUINT_VERIFY: "0"
 
       # The stamps are saved even when a check fails: each stamp marks a
       # check that passed, so the next run pays only for what failed.
