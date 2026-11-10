@@ -163,7 +163,15 @@ func (s *store) ReadinessCheck() error {
 
 // GetCurrentResourceVersion returns the counter of the resource.
 func (s *store) GetCurrentResourceVersion(ctx context.Context) (uint64, error) {
-	return s.readCounter(ctx)
+	c, err := s.readCounter(ctx)
+	if err != nil {
+		return 0, err
+	}
+	//= spec/solas.md#4-2-poll
+	//# When the server reads the counter for a consistent list, it SHOULD poll
+	//# with that value at once and then send a bookmark.
+	s.watchers.hint(c)
+	return c, nil
 }
 
 // EnableResourceSizeEstimation does nothing. Stats reports no object size.

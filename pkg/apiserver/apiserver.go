@@ -50,7 +50,12 @@ func (c CompletedConfig) New() (*Server, error) {
 		return nil, err
 	}
 	lookup := func(ctx context.Context, member string) (*solas.MemberPolicy, error) {
-		obj, err := policies.Get(ctx, member, &metav1.GetOptions{})
+		//= spec/solas.md#15-1-policy
+		//# The server SHOULD read the policy of a member from its watch cache, so
+		//# a bind costs no round trip to the store for it.
+		//
+		// Resource version 0 serves the read from the cache.
+		obj, err := policies.Get(ctx, member, &metav1.GetOptions{ResourceVersion: "0"})
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		}

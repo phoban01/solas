@@ -94,6 +94,20 @@ module store {
     l' = l,
   }
 
+  // A poll may use a counter value from an earlier read as c, spec 4.2:
+  // any value up to the counter. A value at or below last gives no events.
+  action pollHint = {
+    nondet c = 0.to(MAXW).filter(v => v <= counter).oneOf()
+    all {
+      not(w.gone),
+      w.phase == 0,
+      counter' = counter,
+      log' = log,
+      l' = l,
+      w' = { ...w, phase: 1, c: if (c > w.last) c else w.last },
+    }
+  }
+
   // Then it queries the versions from last + 1 to c.
   action pollQuery = {
     val want = 1.to(MAXW).filter(v => v > w.last and v <= w.c)
@@ -149,7 +163,7 @@ module store {
       l' = { ...l, phase: 0 },
   }
 
-  action step = any { write, batchWrite, expire, pollRead, pollQuery, listRead, listQuery, listCheck }
+  action step = any { write, batchWrite, expire, pollRead, pollHint, pollQuery, listRead, listQuery, listCheck }
 
   // Delivered versions strictly increase, spec 3.2 and 4.2.
   val monotonicRV = w.ordered
