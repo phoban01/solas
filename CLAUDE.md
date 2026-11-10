@@ -35,7 +35,9 @@ LocalStack now needs an auth token, so the project uses amazon/dynamodb-local
   tests, and the Duvet gate, and prints the time of each step. The Quint
   checks and the model-based tests skip when their inputs are unchanged
   since a green run (stamps under `.cache/verify`); `VERIFY_FORCE=1`
-  runs them all the same.
+  runs them all the same. CI runs it with `QUINT_VERIFY=0`: the Apalache
+  verifies run on the VM only, and a protocol change runs
+  `devbox run verify` there before the PR.
 
 ## Tooling
 
