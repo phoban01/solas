@@ -105,3 +105,30 @@ per batch. A counter per shard of a resource would lift that; issue #267
 holds it. The claim controller runs one worker, so a cluster sends one
 bind at a time and gains nothing from the batch until it runs several;
 issue #268 is that.
+
+## Amendment: the counter guess (2026-11-10)
+
+After the batched writes, a transaction still cost two round trips: a
+read of the counter, then the `TransactWriteItems` call conditional on
+the value read. The rows of docs/benchmarks.md, "Bind burst", put a
+bind's status write at 99 to 155 ms on a table 40 ms away, with the
+counter read as one of its two trips.
+
+Decision: the first attempt of a batch uses the last counter value that
+this server read or issued, spec 2.3, without a read. Every counter
+read raises that value, and the watchers poll the counter every 200 ms,
+so the value is at most a poll interval old. A guess is never above the
+counter, so a wrong one fails only the counter condition, which also
+carries the seal check, and the retry reads the counter as before.
+After a miss the committer reads for the next batch, then for two, then
+four, up to 64, until a guess hits again. The rules of this ADR hold as
+before: the condition on the counter is the same, only the source of
+the expected value changes, and a failed transaction changes nothing.
+The Quint store model has `writeGuess`; `TestCommitCounterGuess` counts
+the reads of a hit, a miss, and the hold-off.
+
+What it gives, measured on the same table: the status write at 62 ms
+with four claim workers and 46 ms with one, and the burst of 50 claims
+at 2.4 seconds with four workers, 21 binds per second, from 4.5. What it
+does not give: the serialization of the transactions on the counter
+item stays, so the ceiling per resource that issue #267 measures stays.

@@ -309,6 +309,8 @@ is 10 seconds, as in the demo.
 | 2026-11-10 | d8fecb7, the poll hint alone | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 7.7 | 6.5 |
 | 2026-11-10 | d8fecb7 | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 8.1 | 6.2 |
 | 2026-11-10 | d8fecb7 | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 4.5 | 11.1 |
+| 2026-11-10 | 55e3a3b | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 5.2 | 9.6 |
+| 2026-11-10 | 55e3a3b | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 2.4 | 20.8 |
 
 With one worker a cluster binds one claim per reconcile, list and write
 in turn. Four workers bind two and a half times as fast on a local
@@ -327,6 +329,8 @@ each request kind. The rows are the four-worker burst unless marked.
 | 2026-11-10 | d8fecb7, the poll hint alone | 27 ms (318 calls) | 22 ms (85 waits) | 190 ms (143 calls) | 109 ms (100 calls) |
 | 2026-11-10 | d8fecb7 | 42 ms (190 calls) | 28 ms (83 waits) | 155 ms (108 calls) | 28 ms (100 calls) |
 | 2026-11-10 | d8fecb7, one worker | 40 ms (146 calls) | 27 ms (57 waits) | 99 ms (100 calls) | 28 ms (100 calls) |
+| 2026-11-10 | 55e3a3b | 31 ms (172 calls) | 21 ms (69 waits) | 62 ms (105 calls) | 21 ms (100 calls) |
+| 2026-11-10 | 55e3a3b, one worker | 27 ms (179 calls) | 21 ms (54 waits) | 46 ms (100 calls) | 63 ms (100 calls) |
 
 The poll hint of spec 4.2 took the list to one round trip: the server
 polls at once with the counter value it read for the list, and the
@@ -336,12 +340,35 @@ status write cost four round trips: a read of the device, a read of
 the member policy, the counter read, and the transaction. The
 registry now runs the limit checks inside the store's update, on the
 cached object, and reads the policy from the watch cache, spec 15.1.
-The write costs the counter read and the transaction, and the
-four-worker burst binds in 4.5 seconds, 11 binds per second. One
-worker stays at 8 seconds: it binds one claim at a time, and each
+The write then cost the counter read and the transaction, and the
+four-worker burst bound in 4.5 seconds, 11 binds per second. One
+worker stayed at 8 seconds: it binds one claim at a time, and each
 costs a list, a status write, and the claim's own write to etcd, in
-turn. The remaining round trip before each transaction is the counter
-read, issue #267.
+turn.
+
+The counter guess of spec 2.3 removes the read before the transaction:
+the committer tries the last counter value the server read or issued,
+and the watchers' polls keep that value fresh. The status write falls
+to 62 ms with four workers and 46 ms with one, about one round trip,
+and the burst binds in 2.4 seconds with four workers, 21 binds per
+second, and 5.2 seconds with one. On a 40 ms table, a bind now costs
+the cluster a list of one round trip, a status write of one, and its
+own claim write. The GET of 63 ms with one worker is the adopt read
+after the bind, which goes to the table because the controller asks for
+the newest object; it is not on the bind path. What remains above the
+round trip is the controller's own queue. The controller's histograms
+of the same bursts:
+
+| Date | Commit | Workers | Reconciles | Reconcile, mean | Queue wait, mean |
+|------|--------|--------:|-----------:|----------------:|-----------------:|
+| 2026-11-10 | 55e3a3b | 4 | 263 (105 requeue, 158 requeue after) | 39 ms | 356 ms |
+| 2026-11-10 | 55e3a3b | 1 | 265 (100 requeue, 165 requeue after) | 28 ms | 1216 ms |
+
+A claim reconciles about five times on its way to `Bound`, and a
+reconcile costs one round trip. With one worker a claim waits over a
+second in the queue, with four about a third. The next gain for a
+one-worker cluster is fewer reconciles per bind; the round trips per
+reconcile are at one.
 
 Method: `devbox run soak`, the test `TestSoak` in
 `test/e2e/soak_test.go`. Two clusters share one store and a device
