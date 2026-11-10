@@ -325,6 +325,71 @@ second with a bind of 40 seconds at p99, ran right after the 128 member
 run at 10,000 devices in the region; the run again a few minutes later
 gave 15.5, the rate of the earlier rows. Both rows stay on the page.
 
+### One item and one partition (#290)
+
+ADR 0025 rests on two numbers: the update rate of one item, and the
+rate of transactions that share no item. This series measures both
+with the DynamoDB client alone, no API server, `solas-bench --mode
+counter` and `--mode commit`, from the VM against the eu-west-1 table,
+`scripts/aws-bench.sh item eu-west-1`. In counter mode every writer
+sends `UpdateItem ADD n :1` to one item, the issue step of spec 3.1. In
+commit mode every writer sends one `TransactWriteItems` that puts two
+items of its own, 512 bytes each, conditional on their version, the
+commit step of spec 2.3. The items of commit mode share one partition
+key, as the object items of a resource do, spec 2.2; "commit spread"
+gives each writer a partition key of its own. Each run lasted 20
+seconds. Throttles are the calls that DynamoDB throttled and the SDK
+retried inside the call; the ops/s count only the calls that returned.
+
+| Date | Commit | Region, connect | Mode | Writers | Ops/s | p50 ms | p99 ms | Throttles | Errors |
+|------|--------|-----------------|------|--------:|------:|-------:|-------:|----------:|-------:|
+| 2026-11-10 | 0c166fe | eu-west-1, 29 ms | counter | 1 | 33.5 | 29.4 | 38.6 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 25 ms | counter | 4 | 177.7 | 21.9 | 31.3 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 21 ms | counter | 16 | 731.7 | 21.4 | 29.9 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 25 ms | counter | 64 | 967.9 | 23.2 | 1518.5 | 736 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 30 ms | commit | 1 | 23.6 | 41.8 | 58.2 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 25 ms | commit | 4 | 122.8 | 31.8 | 44.9 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 33 ms | commit | 16 | 244.5 | 39.9 | 1077.8 | 92 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 20 ms | commit | 64 | 229.8 | 30.2 | 3652.8 | 946 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 27 ms | commit spread | 1 | 29.0 | 33.9 | 42.6 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 24 ms | commit spread | 4 | 119.9 | 32.7 | 43.3 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 24 ms | commit spread | 16 | 475.4 | 33.1 | 44.7 | 0 | 0 |
+| 2026-11-10 | 0c166fe | eu-west-1, 26 ms | commit spread | 64 | 1260.3 | 34.2 | 267.3 | 264 | 0 |
+
+**One item takes about 1,000 updates per second.** Up to 16 writers,
+the rate is the writers divided by the round trip: 21 ms at p50, the
+connect time. At 64 writers the item reaches 968 updates per second
+and DynamoDB throttles the rest; the p99 of 1.5 seconds is the backoff
+of the SDK. The number of ADR 0025 holds: one item, on a real table,
+from the VM, gives about 1,000 updates per second, each able to issue
+up to 25 versions.
+
+**A partition takes 1,000 write units per second, and the object items
+of a resource share one.** The commit rows stop at 245 transactions per
+second with throttles, at 16 writers and at 64, though no transaction
+touches an item of another. A transaction that puts two items of 512
+bytes costs 4 write units, and the partition of one key takes 1,000 per
+second. With a partition key per writer, the same transactions reach
+1,260 per second at 64 writers, with a p99 of 267 ms and a tenth of the
+throttles. Transactions on different items do not wait for each other;
+transactions on one partition key do. Spec 2.2 puts every object item
+of a resource under one partition key, `obj#` and the resource, and
+every event item under another, so a resource has two such partitions.
+
+**What this bounds.** Under ADR 0025 the counter item is no longer in
+the transaction, so the serialization of the rows above, about 30
+transactions per second, goes. The next ceiling is not the counter: it
+is the write units of the two partitions of the resource. A commit
+writes one object item and one event item, so for objects under 1 KB
+the partition of the object items takes about 500 commits per second,
+and the partition of the event items the same. The two-step write
+lifts the ceiling of a resource from about 30 commits per second to
+about 500, not to 1,000. DynamoDB splits a hot partition key across
+partitions after minutes of load; a 20 second run does not see it.
+A bind of the claim rows is two commits, the bind and its release, so
+500 commits per second is about 250 binds per second per resource,
+five times the 50 of the write path of today.
+
 ### Three regions, one client
 
 The default series from the VM against a table in each region, 20

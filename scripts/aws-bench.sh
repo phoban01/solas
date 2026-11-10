@@ -4,6 +4,9 @@
 #                                the server creates the table on first use
 #   aws-bench.sh down <region>   delete the table
 #   aws-bench.sh url <region>    print the storage URL
+#   aws-bench.sh item <region>   the series of #290 from this host: the
+#                                counter and commit modes of solas-bench at
+#                                1, 4, 16, and 64 writers, 20 seconds each
 #   aws-bench.sh env             print the export lines of a session of the
 #                                bench role, for eval
 #   aws-bench.sh ec2 up <region>     start one instance in the region
@@ -182,6 +185,20 @@ down)
   else
     echo "no table $(table "$region") in $region" >&2
   fi
+  ;;
+item)
+  region=${2:?usage: aws-bench.sh item <region>}
+  session
+  go build -o solas-bench ./cmd/solas-bench
+  header=true
+  for mode in counter commit "commit --spread"; do
+    for writers in 1 4 16 64; do
+      AWS_REGION=$region ./solas-bench --storage-url "$(url "$region")" --mode $mode \
+        --writers "$writers" --duration 20s --header="$header" \
+        2> >(grep -vE "^(SDK |[IWE][0-9]{4} )" >&2)
+      header=false
+    done
+  done
   ;;
 url)
   url "${2:?usage: aws-bench.sh url <region>}"
