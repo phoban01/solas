@@ -75,6 +75,13 @@ func (o *migrateOptions) migrate(ctx context.Context, out io.Writer) error {
 	if err := dst.Empty(ctx); err != nil {
 		return err
 	}
+	if dst.Dynamo == nil && !o.dryRun {
+		// An etcd destination cannot raise its revision, spec 12.2; refuse
+		// it before the copy, while it is still empty.
+		if err := migrate.CheckRevision(ctx, src, dst); err != nil {
+			return err
+		}
+	}
 
 	//= spec/solas.md#12-2-copy
 	//# The tool MUST seal the source before it reads it.
@@ -103,6 +110,13 @@ func (o *migrateOptions) migrate(ctx context.Context, out io.Writer) error {
 	}
 	if err := migrate.Verify(ctx, src, dst); err != nil {
 		return err
+	}
+	if dst.Dynamo != nil {
+		e, err := migrate.MoveEpoch(ctx, src, dst, o.clock.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "moved %s to epoch %d: its versions and tokens are above every one of the source\n", dst.URL, e)
 	}
 	fmt.Fprintf(out, "copied and verified %d devices and %d members in %s\n", rep.Devices, rep.Members, dst.URL)
 	fmt.Fprintf(out, "now set the storage URL of each member cluster to %s, within D\n", dst.URL)

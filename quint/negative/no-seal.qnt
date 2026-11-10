@@ -2,7 +2,7 @@
 // device after the copy, and a cluster on the destination binds it too.
 // Spec 12.2: "The tool MUST seal the source before it reads it."
 module no_seal {
-  import migrate(useSeal = false).* from "../migrate"
+  import migrate(useSeal = false, useEpoch = true).* from "../migrate"
 
   // The steps of the counterexample. The test passes when they break
   // noDoubleBind.

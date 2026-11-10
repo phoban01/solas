@@ -9,11 +9,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/diff"
+
+	"github.com/phoban01/solas/pkg/apis/solas"
 )
 
 //= spec/solas.md#12-2-copy
 //# After the copy, the tool MUST verify that each object in the destination
-//# equals its source, except for the resource version.
+//# equals its source, except for the resource version and the epoch.
 
 // Verify compares every Device and Member of two stores. It ignores the
 // resource version. It returns an error that names each missing object,
@@ -64,6 +66,10 @@ func byName(ctx context.Context, s *Store, r resource) (map[string]runtime.Objec
 			return nil, err
 		}
 		m.SetResourceVersion("")
+		// The move raises the epoch of the destination, spec 12.2.
+		if f, ok := o.(*solas.StoreFormat); ok {
+			f.Epoch = 0
+		}
 		out[m.GetName()] = o
 	}
 	return out, nil

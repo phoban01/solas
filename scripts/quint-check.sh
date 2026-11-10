@@ -86,6 +86,8 @@ pass "negative no-epoch" quint test quint/negative/no-epoch.qnt \
   --main no_epoch --match tokenBackTest
 pass "negative no-token-raise" quint test quint/negative/no-token-raise.qnt \
   --main no_token_raise --match tokenRaiseTest
+pass "negative no-move-epoch" quint test quint/negative/no-move-epoch.qnt \
+  --main no_move_epoch --match versionBackTest
 pass "negative force-clear" quint test quint/negative/force-clear.qnt \
   --main force_clear
 
