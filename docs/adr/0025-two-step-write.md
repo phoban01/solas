@@ -15,8 +15,8 @@ retry. The batched writes of ADR 0003 gave each server more writes per
 transaction, and the counter guess took the read before it away; the
 rows after both show the same ceiling, because the counter item in the
 transaction is what serializes the members. ADR 0003 assumed about 1000
-writes per second from the counter; the counter gives that only when no
-transaction holds it.
+writes per second from the counter; the rows of #290 measured 970, and the
+counter gives that only when no transaction holds it.
 
 ## Decision
 
@@ -73,9 +73,21 @@ order or fails with `410 Gone`.
 ## Consequences
 
 - The ceiling of a resource moves from one transaction per round trip to
-  the update rate of one item, about 1000 per second in DynamoDB, with
-  up to 25 writes per update. The bench measures it; this ADR is
-  accepted when a row shows it.
+  the write units of its two partitions. The rows of #290
+  (`docs/benchmarks.md`, "One item and one partition") measure what
+  bounds it: one item takes about 970 updates per second from the VM,
+  each able to issue up to 25 versions, so the counter is not the
+  limit; a transaction that shares no item with another runs at over
+  1,200 per second across partition keys, but at about 245 per second
+  under one partition key, where a two-item transaction costs 4 of the
+  1,000 write units a partition takes per second. Spec 2.2 puts the
+  object items of a resource under one partition key and its event
+  items under another, so a commit of one object item and one event
+  item under 1 KB each gives about 500 commits per second per resource,
+  about 250 binds per second against the 50 of the write path of
+  today. The ceiling moves by about five times, not twenty, unless the
+  object items get more partition keys, which is a change to spec 2.2
+  and to every list.
 - A watch sees a write when its commit lands, and the poll delivers it
   once every lower version has landed. The lag grows by the time of one
   commit, about a round trip, when writes overlap.

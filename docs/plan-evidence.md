@@ -103,7 +103,12 @@ from the VM or from one EC2 instance in the table's region.
   140 ms, bound by the write loop, not the table: writers raced on the
   counter item and one got through per two round trips. Spec 2.3 now
   batches the writes of a server; #267 and #268 take it further. The
-  expectation was wrong by a factor of twenty.
+  expectation was wrong by a factor of twenty. The item rows of #290,
+  done 2026-11-10 with the DynamoDB client alone, put the numbers on
+  the page: one item takes 970 updates per second from the VM, and a
+  two-item transaction under one partition key stops at 245 per second
+  on the write units of the partition, 1,260 per second across
+  partition keys (benchmarks.md, "One item and one partition").
 - **The partition limit on lists.** All objects of a resource share one
   partition key, so a list of 10,000 devices reads about 10,000 read
   units from one partition, whose limit is 3000 per second. The 10,000
@@ -258,9 +263,17 @@ one row, and it says whether the ceiling of 27 binds per second is the
 store's or the VM's distance; #295 runs on the same instance. Then #290
 and #291 from the VM, and #293 from their rows. ADR 0025 goes ahead,
 #279 to #286, only when the in-region row stays under 100 binds per
-second at 8 members and the item row puts the item well above it;
-otherwise the write path of today stays, with its fleet size on the
-page. Then #264, M24 with #294, M26, and M25 last. #233 and #266 of M22
+second at 8 members and the item row puts the item well above it.
+Both held on 2026-11-10: 58 binds per second at 8 members in the
+region, and 970 updates per second on one item. The item rows also
+found the next ceiling, the write units of the partition that holds
+the object items of a resource, about 500 commits per second, so ADR
+0025 gives about five times the binds of today, not twenty. #293 puts
+that next to what the ADR gives up, and the decision on #279 to #286
+follows it. The old rule stays for the record: the ADR goes ahead
+only on those two rows; otherwise the write path of today stays, with
+its fleet size on the page. Then #264, M24 with #294, M26, and M25
+last. #233 and #266 of M22
 stay open and run alongside.
 
 ## The cost of M20
