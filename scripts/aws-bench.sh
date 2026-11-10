@@ -72,7 +72,7 @@ ec2_ssh() {
 }
 
 ec2_up() {
-  local region=$1 st tag ami myip sg id ip ev
+  local region=$1 st tag ami myip sg id ip ev rtt
   st=$(ec2_state "$region")
   if [ -e "$st/id" ]; then
     echo "ec2: $(cat "$st/id") is up at $(cat "$st/ip")" >&2
@@ -126,7 +126,8 @@ ec2_up() {
     && (nohup ./etcd --data-dir etcd-data --log-level error \
       --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://$ip:2379 >etcd.log 2>&1 &) \
     && sleep 2 && curl -sf http://127.0.0.1:2379/health >/dev/null"
-  echo "ec2: etcd $ev at http://$ip:2379, for SOLAS_ETCD_ENDPOINT" >&2
+  rtt=$(curl -s -o /dev/null -w "%{time_connect}" "http://$ip:2379/health" || echo unknown)
+  echo "ec2: etcd $ev at http://$ip:2379, for SOLAS_ETCD_ENDPOINT; TCP connect ${rtt}s from this host" >&2
 }
 
 # ec2_run <region> <solas-bench flags...> runs the bench on the instance

@@ -83,7 +83,12 @@ from the VM or from one EC2 instance in the table's region.
   after M22 shows the difference.
 - **128 members.** From one EC2 instance in the region, so the bench
   has the memory and no WAN in the way: 128 members, 8 claims each,
-  default pool and 10,000 devices.
+  default pool and 10,000 devices. Done 2026-11-10, with 2 and 8
+  members too: 58 binds per second at 8 members, 47 at 32, and 22 at
+  128, from 2 ms away, against 27 from the VM at 67 ms. The ceiling is
+  the store's, not the distance (benchmarks.md, "In the table's
+  region"). An etcd on the same instance gave twenty times the binds
+  from the VM ("Same round trip").
 - **Latency by region.** The same run against tables in eu-west-1,
   us-east-1, and ap-southeast-1 from the VM. The rows carry the RTT, so
   the bind and list costs read as multiples of it, as WAN

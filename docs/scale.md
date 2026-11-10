@@ -127,20 +127,34 @@ Two options, when a fleet needs more:
 
 ## A run on DynamoDB
 
-The local numbers do not show the limits of DynamoDB. One run on a real
-table needs an AWS account with a table in one region:
+The rows are in [benchmarks.md](benchmarks.md), "DynamoDB": the VM
+against a table in three regions, and, under "In the table's region",
+an instance 2 ms from the table at 2 to 128 members. What they say:
 
-```sh
-AWS_PROFILE=<profile> go run ./cmd/solas-bench \
-  --storage-url 'dynamodb://solas-bench?region=<region>&create-table=true' \
-  --members 8 --claims 8 --duration 30s
-```
+**The counter item in the transaction sets the ceiling, at about 50
+binds per second per resource, from any distance.** From the VM at
+67 ms the Device resource gave 27 binds per second at 8 and at 32
+members; from an instance in the region, 58 at 8 members, 47 at 32,
+and 22 at 128. A bind from 2 ms away took 645 ms at the median at 32
+members, hundreds of round trips: the transactions of all members
+queue on the counter item, DynamoDB cancels the ones that raced, and
+each retry reads the counter again. More members means more cancelled
+transactions, so 128 members get less than 32. ADR 0025 is the proposal
+that takes the counter out of the transaction; issue #290 measures what
+one item sustains without it.
 
-The tool creates the table when `create-table=true`, deletes every
-Device under its prefix when it ends, and leaves the table. Run it at 2,
-8, 32, and 128 members, and add the rows here with the region and the
-date. Expect the binds per second to rise with members until the counter
-item reaches its write limit, and the p99 to rise from there.
+**At one distance, etcd gives twenty times the binds.** An etcd on the
+same instance gave 561 binds per second at 8 members and 696 at 32,
+against 28 and 27 on DynamoDB from the same VM in the same minutes
+(benchmarks.md, "Same round trip"). A bind on etcd takes one round trip,
+and the writes of all members are in flight at once.
+
+The commands: `scripts/aws-bench.sh up <region>` puts the cost alarm
+and prints the storage URL; `SOLAS_DYNAMODB_URL=<that url>
+SCALE_STORES=dynamodb devbox run scale` runs the series from the VM;
+`scripts/aws-bench.sh ec2 up|scale|down <region>` runs it from an
+instance in the region, with an etcd on the instance for the rows at
+one distance; `scripts/aws-bench.sh down <region>` deletes the table.
 
 ## 10,000 devices
 
