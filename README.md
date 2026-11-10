@@ -37,6 +37,8 @@ Secret `solas-storage`. `deploy/solas/config/storage.yaml` is an example.
 On DynamoDB, the AWS credentials come from the environment or from the
 same Secret. [docs/store-contract.md](docs/store-contract.md) shows what
 the protocol needs from a store, and how each store keeps it.
+[docs/scale.md](docs/scale.md), "Fleet size", has the members, binds per
+minute, and devices one store supports, from the measured rows.
 
 To move a running mesh to another store, see
 [docs/migrate.md](docs/migrate.md): `solas migrate` seals the old store,
