@@ -58,6 +58,11 @@ type options struct {
 	memberLease time.Duration
 	// maxUnits stops a run whose DynamoDB request units pass it.
 	maxUnits int64
+	// mode is claim, the simulated members, or counter or commit, the
+	// item modes of item.go. writers is the goroutines of an item mode.
+	mode    string
+	writers int
+	spread  bool
 	// pollInterval is the watch poll interval of the DynamoDB store.
 	pollInterval time.Duration
 }
@@ -72,6 +77,9 @@ func main() {
 	fs.IntVar(&o.devices, "devices", 0, "devices in the pool; 0 means members * claims")
 	fs.DurationVar(&o.duration, "duration", 10*time.Second, "how long the claims run")
 	fs.BoolVar(&o.header, "header", true, "print the header row")
+	fs.StringVar(&o.mode, "mode", "claim", "claim: simulated members bind and release; counter: writers add to one item; commit: writers put two items of their own in a transaction (ADR 0025, #290)")
+	fs.IntVar(&o.writers, "writers", 4, "goroutines of an item mode")
+	fs.BoolVar(&o.spread, "spread", false, "commit mode: give each writer a partition key of its own, instead of the one partition key of a resource")
 	fs.DurationVar(&o.pollInterval, "poll-interval", dynamo.DefaultPollInterval, "how often a watch polls the event log of the DynamoDB store, spec 4.2")
 	fs.Int64Var(&o.maxUnits, "max-units", 10_000_000, "stop the run when its DynamoDB request units (calls counted by the tool) pass this; a cost guard on a real table")
 	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")
@@ -85,7 +93,16 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, o); err != nil {
+	runner := run
+	switch o.mode {
+	case "claim":
+	case "counter", "commit":
+		runner = runItem
+	default:
+		fmt.Fprintf(os.Stderr, "solas-bench: --mode %q: want claim, counter, or commit\n", o.mode)
+		os.Exit(2)
+	}
+	if err := runner(ctx, o); err != nil {
 		fmt.Fprintln(os.Stderr, "solas-bench:", err)
 		os.Exit(1)
 	}
