@@ -113,6 +113,9 @@ Claude Code session, so heavy jobs must not overlap.
 - The server starts and reports ready without the store; writes fail
   with 503 until it has read the store
   ([docs/adr/0024-start-without-store.md](docs/adr/0024-start-without-store.md)).
+- Versions come from one counter update outside the transaction, and
+  the log is settled before a list or a delivery (proposed)
+  ([docs/adr/0025-two-step-write.md](docs/adr/0025-two-step-write.md)).
 
 ## Writing
 

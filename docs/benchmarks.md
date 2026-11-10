@@ -205,6 +205,28 @@ a transaction carried on average.
 | 2026-11-09 | dcbdf8e | eu-west-1, 20 ms | 2 | 10000 | 20 s | 28.8 | 0.5 | 113.5 | 998.7 | 74.1 | 166.8 | 836.2 | 84.3 | 220.2 | 61.6 | 7.1 | 0 |
 | 2026-11-09 | dcbdf8e | eu-west-1, 20 ms | 8 | 10000 | 20 s | 39.1 | 0.4 | 474.8 | 3564.4 | 69.3 | 184.1 | 840.6 | 112.0 | 240.1 | 35.1 | 6.9 | 0 |
 
+### With the counter guess (spec 2.3, commit 93bbdf5)
+
+The same runs after the counter guess of ADR 0003, which takes the
+read before each transaction away. The bind burst rows above show what
+it does for one cluster's latency. Here, with many members, it changes
+nothing: the ceiling is where the batched rows left it.
+
+| Date | Commit | Region, connect | Members | Devices | Run | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Reads/member/s | Writes/tx | Errors |
+|------|--------|-----------------|--------:|--------:|----:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|---------------:|----------:|-------:|
+| 2026-11-10 | 93bbdf5 | eu-west-1, 67 ms | 2 | 16 | 20 s | 12.6 | 43.6 | 338.8 | 1175.0 | 42.1 | 88.3 | 125.2 | 53.4 | 198.4 | 55.8 | 1.6 | 0 |
+| 2026-11-10 | 93bbdf5 | eu-west-1, 67 ms | 8 | 64 | 20 s | 26.9 | 45.7 | 404.1 | 2481.0 | 43.4 | 135.2 | 225.7 | 83.8 | 228.7 | 38.0 | 2.9 | 0 |
+| 2026-11-10 | 93bbdf5 | eu-west-1, 67 ms | 32 | 256 | 20 s | 27.2 | 45.9 | 1447.9 | 8339.4 | 50.5 | 370.2 | 223.7 | 119.3 | 238.3 | 17.7 | 3.2 | 0 |
+
+At 8 and 32 members the rate is 27 binds per second, about 54 writes
+per second in transactions of 3 writes, so about 18 transactions per
+second: one per round trip of 67 ms. The transactions of all members
+touch the counter item, and DynamoDB lets one of them through at a
+time; the guess of each member misses as soon as another member writes,
+and the read and the retry cost the round trip again. The ceiling is
+the counter item in the transaction, not the read before it. ADR 0025
+proposes to take the counter out of the transaction.
+
 **Two to three times the binds, and the batch size says why.** At 8
 members the binds per second went from 11.1 to 28.4 with 2.8 writes per
 transaction, and the five minute run held 27.9. At 10,000 devices,
