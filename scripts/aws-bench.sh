@@ -277,7 +277,7 @@ pg)
     aws rds delete-db-subnet-group --region "$region" --db-subnet-group-name "$name" 2>/dev/null || true
     if [ -e "$st/sg" ]; then
       for _ in $(seq 12); do
-        aws ec2 delete-security-group --region "$region" --group-id "$(cat "$st/sg")" 2>/dev/null && break
+        aws ec2 delete-security-group --region "$region" --group-id "$(cat "$st/sg")" >/dev/null 2>&1 && break
         sleep 5
       done
     fi
