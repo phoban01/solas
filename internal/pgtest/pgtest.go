@@ -7,12 +7,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
 	storageurl "github.com/phoban01/solas/pkg/storage"
-	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // URLEnv names the variable that holds the storage URL of the test
@@ -32,7 +32,9 @@ func URL(t testing.TB) string {
 
 // Prefix returns a storage prefix that no other test uses, so tests that
 // share one Postgres do not see each other's objects, and drops its
-// schema when the test ends.
+// schema when the test ends. The prefix is chosen so that its schema is
+// the prefix without the slash, as pkg/storage/postgres names it, which
+// this package cannot import: the tests of the store use this package.
 func Prefix(t testing.TB) string {
 	t.Helper()
 	b := make([]byte, 6)
@@ -47,7 +49,7 @@ func Prefix(t testing.TB) string {
 			return
 		}
 		defer conn.Close(ctx)
-		_, err = conn.Exec(ctx, `DROP SCHEMA IF EXISTS "`+postgres.SchemaName(prefix)+`" CASCADE`)
+		_, err = conn.Exec(ctx, `DROP SCHEMA IF EXISTS "`+Schema(prefix)+`" CASCADE`)
 		if err != nil {
 			t.Logf("drop the schema of %s: %v", prefix, err)
 		}
@@ -63,3 +65,7 @@ func Connect(ctx context.Context, u string) (*pgx.Conn, error) {
 	}
 	return pgx.Connect(ctx, sc.PostgresURL())
 }
+
+// Schema is the schema of a prefix from Prefix: the prefix without its
+// leading slash.
+func Schema(prefix string) string { return strings.TrimPrefix(prefix, "/") }

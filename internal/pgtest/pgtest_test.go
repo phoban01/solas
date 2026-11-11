@@ -3,8 +3,6 @@ package pgtest
 import (
 	"context"
 	"testing"
-
-	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // TestPrefix shows that the test Postgres answers, that a schema can be
@@ -20,7 +18,7 @@ func TestPrefix(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close(ctx)
-		if _, err := conn.Exec(ctx, `CREATE SCHEMA "`+postgres.SchemaName(prefix)+`"`); err != nil {
+		if _, err := conn.Exec(ctx, `CREATE SCHEMA "`+Schema(prefix)+`"`); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -30,7 +28,7 @@ func TestPrefix(t *testing.T) {
 	}
 	defer conn.Close(ctx)
 	var n int
-	err = conn.QueryRow(ctx, "SELECT count(*) FROM information_schema.schemata WHERE schema_name = $1", postgres.SchemaName(prefix)).Scan(&n)
+	err = conn.QueryRow(ctx, "SELECT count(*) FROM information_schema.schemata WHERE schema_name = $1", Schema(prefix)).Scan(&n)
 	if err != nil {
 		t.Fatal(err)
 	}
