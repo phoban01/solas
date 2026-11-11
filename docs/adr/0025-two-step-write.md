@@ -18,6 +18,14 @@ transaction is what serializes the members. ADR 0003 assumed about 1000
 writes per second from the counter; the rows of #290 measured 970, and the
 counter gives that only when no transaction holds it.
 
+The transaction of today gives a property that this ADR gives up. The
+commit order of a resource is its version order, and the log never has
+a hole: a reader that sees version `n` has seen every write below it,
+spec 3.2 and 4.3. The two-step write trades that for the update rate of
+one item. A reader then sees holes in flight, `NOOP` events where a
+write failed or was fenced, and a settle time `F` before a list and a
+delivery, so the order is the same only once the log is settled.
+
 ## Decision
 
 A write takes two steps.
@@ -69,6 +77,26 @@ version the writer read, the versions of a resource strictly increase in
 log order, a list is a snapshot at its version because the log is
 settled to it before the query, and a watch delivers every change in
 order or fails with `410 Gone`.
+
+**The rule for building it.** The two-step write is built when the
+in-region row (#243) stays under 100 binds per second at 8 members and
+the item row (#290) puts the item well above it. Both rows exist:
+58 binds per second at 8 members from 2 ms away, and 970 updates per
+second on one item (docs/benchmarks.md, "In the table's region" and
+"One item and one partition"). The item rows also found the next
+ceiling, the write units of the partition that holds the object items
+of a resource, so the two-step write gives about five times the binds
+of today, not twenty; "Consequences" has the number.
+
+**What the write path of today supports.** docs/scale.md, "Fleet size",
+derives it from the rows: one resource commits 19 transactions per
+second from the VM at 67 ms and 39 from the region; so 190 to 390
+members per store at the default lease of 30 seconds, 1,900 to 3,900
+at a lease of 5 minutes; 1,600 to 3,500 binds per minute; and a pool
+of 97,000 to 208,000 devices that each change hands once an hour, or
+2.3 to 5 million once a day. A fleet inside those numbers does not
+need this ADR. The status stays proposed until the decision on #279 to
+#286 weighs the five times against the property above.
 
 ## Consequences
 
