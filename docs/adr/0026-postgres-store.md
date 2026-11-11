@@ -1,6 +1,6 @@
 # ADR 0026: A Postgres store, on Aurora Serverless v2
 
-Status: proposed (2026-11-11)
+Status: accepted (2026-11-11)
 
 ## Context
 

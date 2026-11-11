@@ -1,6 +1,6 @@
 # ADR 0025: Versions issued outside the transaction
 
-Status: proposed (2026-11-10), issue #267.
+Status: proposed (2026-11-10), issue #267. Not built: ADR 0026 takes the other way.
 
 ## Context
 
