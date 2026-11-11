@@ -93,11 +93,10 @@ jittered interval of the retention time, since Postgres has no TTL;
 spec 4.1's rule that nothing depends on the time of that delete holds
 as it is.
 
-**Seal, epoch, migrate.** `sealed` lives on the counter row, the epoch
-in the StoreFormat object as on the other stores, and a restore raises
-`n` of each counter row as it does on DynamoDB,
-so `solas migrate` and `solas restore` work as on the other stores,
-ADR 0015 and ADR 0018.
+**Seal, epoch, migrate.** `sealed` lives on the counter row. The epoch
+lives in the StoreFormat object, as on the other stores. A restore
+raises `n` of each counter row, as on DynamoDB. So `solas migrate` and
+`solas restore` work as they do today, ADR 0015 and ADR 0018.
 
 **URL.** `postgres://<host>:<port>?database=<name>&sslmode=<mode>&create-tables=true`.
 The rules of spec 2.6 hold: no path, no credentials in the URL. The
