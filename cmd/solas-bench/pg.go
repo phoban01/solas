@@ -232,8 +232,12 @@ func pgPoll(ctx context.Context, pool *pgxpool.Pool, cursor int64) (int64, error
 	return cursor, rows.Err()
 }
 
-// pgConnectTime measures one TCP connect to the server.
+// pgConnectTime measures one TCP connect to the server, with the name
+// resolved first, so the row carries the round trip and not the lookup.
 func pgConnectTime(ctx context.Context, host string, port uint16) (time.Duration, error) {
+	if ips, err := net.DefaultResolver.LookupIPAddr(ctx, host); err == nil && len(ips) > 0 {
+		host = ips[0].String()
+	}
 	addr := net.JoinHostPort(host, fmt.Sprint(port))
 	from := time.Now()
 	conn, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", addr)
