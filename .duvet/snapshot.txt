@@ -114,38 +114,54 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: Every read of the etcd store MUST be a linearizable read.
 
   SECTION: [2.8. Postgres store](#2-8-postgres-store)
-    TEXT[!MUST]: The Postgres store MUST keep its tables in a schema named by the
-    TEXT[!MUST]: storage prefix of the API server.
-    TEXT[!MUST]: The store MUST have the tables `counters`, `objects`, and `events`.
-    TEXT[!MUST]: Every write MUST be one transaction.
-    TEXT[!MAY]: A transaction MAY carry several writes of one resource that arrived at
-    TEXT[!MAY]: the server together, as in section 2.3.
-    TEXT[!MUST]: The transaction MUST first update the `counters` row of the resource,
-    TEXT[!MUST]: on condition that `sealed` is false, and set `n` to `n + k`.
-    TEXT[!MUST]: The writes of the transaction MUST get the versions `n + 1` to `n + k`,
-    TEXT[!MUST]: in the order of the transaction.
-    TEXT[!MUST]: The transaction MUST then run one conditional statement for each write.
-    TEXT[!MUST]: For a create, the statement MUST be an insert that fails when the key
-    TEXT[!MUST]: exists.
-    TEXT[!MUST]: For an update, the statement MUST be an update on condition that `rv`
-    TEXT[!MUST]: equals the version that the server read.
-    TEXT[!MUST]: For a delete, the statement MUST be a delete on condition that `rv`
-    TEXT[!MUST]: equals the version that the server read.
-    TEXT[!MUST]: A statement that changes no row MUST roll the transaction back, the
-    TEXT[!MUST]: counter update with it.
-    TEXT[!MUST]: The transaction MUST insert one `events` row for each write, with the
-    TEXT[!MUST]: version of the write.
-    TEXT[!MUST]: The server MUST run the transaction as one call of a function in the
-    TEXT[!MUST]: database.
-    TEXT[!MUST]: When the counter update changes no row, the store is sealed, section
-    TEXT[!MUST]: 12.1, and the write MUST fail with `503 ServiceUnavailable`.
-    TEXT[!MUST]: When the insert of a create fails, the server MUST return
-    TEXT[!MUST]: `409 AlreadyExists` for that write.
-    TEXT[!MUST]: When the update or the delete of a write changes no row, the server MUST
-    TEXT[!MUST]: read the object again and retry that write, as in section 2.3.
-    TEXT[!MUST]: The other writes of the transaction MUST retry in a new transaction.
+    TEXT[!MUST,implementation]: The Postgres store MUST keep its tables in a schema named by the
+    TEXT[!MUST,implementation]: storage prefix of the API server.
+    TEXT[!MUST,implementation]: The store MUST have the tables `counters`, `objects`, and `events`.
+    TEXT[implementation]: A `counters` row holds, for one resource, the last issued resource
+    TEXT[implementation]: version `n` and the flag `sealed`.
+    TEXT[implementation]: An `objects` row holds, for one object, its resource, its key, the
+    TEXT[implementation]: resource version `rv` of its last write, and the encoded object `value`.
+    TEXT[implementation]: An `events` row holds, for one write, its resource, its resource
+    TEXT[implementation]: version `rv`, the event type, the key, the encoded object, and the time
+    TEXT[implementation]: `expires`.
+    TEXT[!MUST,implementation]: Every write MUST be one transaction.
+    TEXT[!MAY,implementation]: A transaction MAY carry several writes of one resource that arrived at
+    TEXT[!MAY,implementation]: the server together, as in section 2.3.
+    TEXT[!MUST,implementation]: The transaction MUST first update the `counters` row of the resource,
+    TEXT[!MUST,implementation]: on condition that `sealed` is false, and set `n` to `n + k`.
+    TEXT[implementation]: The update takes the row lock, and Postgres holds the lock until the
+    TEXT[implementation]: transaction ends.
+    TEXT[test]: So the transactions of one resource commit one at a time, in the order
+    TEXT[test]: in which they took the lock.
+    TEXT[!MUST,implementation]: The writes of the transaction MUST get the versions `n + 1` to `n + k`,
+    TEXT[!MUST,implementation]: in the order of the transaction.
+    TEXT[!MUST,implementation]: The transaction MUST then run one conditional statement for each write.
+    TEXT[!MUST,implementation,test]: For a create, the statement MUST be an insert that fails when the key
+    TEXT[!MUST,implementation,test]: exists.
+    TEXT[!MUST,implementation,test]: For an update, the statement MUST be an update on condition that `rv`
+    TEXT[!MUST,implementation,test]: equals the version that the server read.
+    TEXT[!MUST,implementation,test]: For a delete, the statement MUST be a delete on condition that `rv`
+    TEXT[!MUST,implementation,test]: equals the version that the server read.
+    TEXT[!MUST,implementation,test]: A statement that changes no row MUST roll the transaction back, the
+    TEXT[!MUST,implementation,test]: counter update with it.
+    TEXT[test]: The versions of a rolled back transaction are never issued, so the
+    TEXT[test]: event log has no hole.
+    TEXT[!MUST,implementation]: The transaction MUST insert one `events` row for each write, with the
+    TEXT[!MUST,implementation]: version of the write.
+    TEXT[!MUST,implementation]: The server MUST run the transaction as one call of a function in the
+    TEXT[!MUST,implementation]: database.
+    TEXT[implementation]: A lock held across a round trip to the server caps the resource at a
+    TEXT[implementation]: few writes per second, whatever the number of writers.
+    TEXT[test]: The commit order of the writes of a resource is their version order.
+    TEXT[!MUST,implementation,test]: When the counter update changes no row, the store is sealed, section
+    TEXT[!MUST,implementation,test]: 12.1, and the write MUST fail with `503 ServiceUnavailable`.
+    TEXT[!MUST,implementation]: When the insert of a create fails, the server MUST return
+    TEXT[!MUST,implementation]: `409 AlreadyExists` for that write.
+    TEXT[!MUST,implementation]: When the update or the delete of a write changes no row, the server MUST
+    TEXT[!MUST,implementation]: read the object again and retry that write, as in section 2.3.
+    TEXT[!MUST,implementation]: The other writes of the transaction MUST retry in a new transaction.
     TEXT[!MUST]: Every read MUST go to the writer instance of the database.
-    TEXT[!MUST]: A get MUST read the `objects` row.
+    TEXT[!MUST,implementation]: A get MUST read the `objects` row.
     TEXT[!MUST]: A list MUST read the `counters` row and the `objects` rows in one
     TEXT[!MUST]: transaction at the `REPEATABLE READ` level.
     TEXT[!MUST]: The list MUST return that value as its resource version, with no second
