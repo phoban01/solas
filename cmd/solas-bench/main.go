@@ -94,7 +94,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := run
-	pg := strings.HasPrefix(o.storageURL, "postgres://") || strings.HasPrefix(o.storageURL, "postgresql://")
+	pg := strings.HasPrefix(o.storageURL, "postgres://")
 	switch o.mode {
 	case "claim":
 	case "counter", "commit", "poll":
@@ -150,6 +150,9 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 	sc, err := storageurl.Parse(o.storageURL)
 	if err != nil {
 		return g, nil, fmt.Errorf("--storage-url: %w", err)
+	}
+	if sc.Kind == storageurl.Postgres {
+		return g, nil, fmt.Errorf("--storage-url: the Postgres store is not built yet; --mode counter, commit, and poll run on it")
 	}
 	if sc.Kind == storageurl.Etcd {
 		g.EtcdServers = sc.Endpoints

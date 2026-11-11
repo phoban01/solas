@@ -91,7 +91,8 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	flags.StringVar(&o.StorageURL, "storage-url", o.StorageURL,
 		"The shared store. All member clusters must use the same store. "+
 			"dynamodb://<table>?region=<region>&endpoint=<url>&create-table=true picks a DynamoDB table in one region; "+
-			"etcd://<host:port>[,<host:port>...] picks an etcd cluster.")
+			"etcd://<host:port>[,<host:port>...] picks an etcd cluster; "+
+			"postgres://<host:port>?database=<name>&sslmode=<mode>&create-tables=true picks a Postgres database, with PGUSER and PGPASSWORD from the environment.")
 	flags.StringVar(&o.StorageVersion, "storage-version", o.StorageVersion, "Version of the solas.dev group that objects are stored in. Every member must be able to read it.")
 	flags.DurationVar(&o.EventRetention, "event-retention", o.EventRetention, "How long events stay in the event log of the DynamoDB store.")
 	flags.DurationVar(&o.PollInterval, "poll-interval", o.PollInterval, "How often a watch polls the event log of the DynamoDB store.")
@@ -162,6 +163,9 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 	sc, err := storageurl.Parse(o.StorageURL)
 	if err != nil {
 		return getter, fmt.Errorf("--storage-url: %w", err)
+	}
+	if sc.Kind == storageurl.Postgres {
+		return getter, fmt.Errorf("--storage-url: the Postgres store is not built yet, ADR 0026")
 	}
 	if sc.Kind == storageurl.Etcd {
 		getter.EtcdServers = sc.Endpoints

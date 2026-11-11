@@ -249,23 +249,23 @@ pg)
     echo "$host" >"$st/host"
     rtt=$(bash -c "exec 3<>/dev/tcp/$host/5432" 2>/dev/null && echo ok || echo unknown)
     echo "pg: $host:5432, reachable: $rtt" >&2
-    echo "postgres://$host:5432/solas?sslmode=require"
+    echo "postgres://$host:5432"
     ;;
-  url) echo "postgres://$(cat "$st/host"):5432/solas?sslmode=require" ;;
+  url) echo "postgres://$(cat "$st/host"):5432" ;;
   item)
     go build -o solas-bench ./cmd/solas-bench
     header=true
     for mode in counter commit "commit --spread"; do
       for writers in 1 4 16 64; do
         PGUSER=solas PGPASSWORD=$(cat "$st/password") ./solas-bench \
-          --storage-url "postgres://$(cat "$st/host"):5432/solas?sslmode=require" --mode $mode \
+          --storage-url "postgres://$(cat "$st/host"):5432" --mode $mode \
           --writers "$writers" --duration 20s --header="$header"
         header=false
       done
     done
     for pollers in 100 1000; do
       PGUSER=solas PGPASSWORD=$(cat "$st/password") ./solas-bench \
-        --storage-url "postgres://$(cat "$st/host"):5432/solas?sslmode=require" --mode poll \
+        --storage-url "postgres://$(cat "$st/host"):5432" --mode poll \
         --writers "$pollers" --duration 20s --header=false
     done
     ;;

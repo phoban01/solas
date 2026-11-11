@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	storageurl "github.com/phoban01/solas/pkg/storage"
 )
 
 // The Postgres modes measure what a Postgres store would give, with the
 // client alone and no API server, before any store code exists. The URL
-// is a pgx connection URL; the credentials come from PGUSER and
+// is the storage URL of spec 2.6; the credentials come from PGUSER and
 // PGPASSWORD, as the store's URL rule needs, spec 2.6.
 //
 //   - counter: every writer runs UPDATE ... RETURNING on one counter row,
@@ -39,7 +41,11 @@ INSERT INTO bench_counter (id, n) VALUES (1, 0) ON CONFLICT DO NOTHING;
 `
 
 func runPG(ctx context.Context, o options) error {
-	cfg, err := pgxpool.ParseConfig(o.storageURL)
+	sc, err := storageurl.Parse(o.storageURL)
+	if err != nil {
+		return fmt.Errorf("--storage-url: %w", err)
+	}
+	cfg, err := pgxpool.ParseConfig(sc.PostgresURL())
 	if err != nil {
 		return fmt.Errorf("--storage-url: %w", err)
 	}
