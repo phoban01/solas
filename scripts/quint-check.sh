@@ -154,6 +154,7 @@ queue pass "run solas2 safety" run quint/solas.qnt --main solas2 --invariant saf
 # Fencing does not depend on the lease margin: it holds even when M = 0.
 queue pass "run no-margin fencing" run quint/negative/no-margin.qnt --invariant fencing
 queue pass "run store3 storeSafety" run quint/store.qnt --main store3 --invariant storeSafety
+queue pass "run store3pg storeSafety" run quint/store.qnt --main store3pg --invariant storeSafety
 queue pass "run migrate2 migrateSafety" run quint/migrate.qnt --main migrate2 --invariant migrateSafety
 queue pass "run restore2 tokenOrder" run quint/restore.qnt --main restore2 --invariant tokenOrder
 queue pass "run limits2 withinLimit" run quint/limits.qnt --main limits2 --invariant withinLimit
@@ -171,6 +172,7 @@ for w in witnessSwitched witnessBoundOnDst; do
   queue violate "witness migrate2 $w" run quint/migrate.qnt --main migrate2 --invariant "$w"
 done
 for w in witnessDelivered witnessGone witnessListed; do
+  queue violate "witness store3pg $w" run quint/store.qnt --main store3pg --invariant "$w"
   queue violate "witness store3 $w" run quint/store.qnt --main store3 --invariant "$w"
 done
 
@@ -178,6 +180,8 @@ queue violate "negative no-seal run" \
   run quint/negative/no-seal.qnt --invariant noDoubleBind
 queue violate "negative list-no-recheck" \
   run quint/negative/list-no-recheck.qnt --invariant listSnapshot
+queue violate "negative sequence-not-lock" \
+  run quint/negative/sequence-not-lock.qnt --invariant listSnapshot
 queue violate "negative watch-no-gap-check" \
   run quint/negative/watch-no-gap-check.qnt --invariant watchComplete
 
@@ -232,6 +236,8 @@ if [ "$verify" = 1 ]; then
     quint verify quint/migrate.qnt --main migrate2 --invariant migrateSafety --max-steps 10
   verified pass "verify store3 storeSafety depth 12" quint/store.qnt -- \
     quint verify quint/store.qnt --main store3 --invariant storeSafety --max-steps 12
+  verified pass "verify store3pg storeSafety depth 12" quint/store.qnt -- \
+    quint verify quint/store.qnt --main store3pg --invariant storeSafety --max-steps 12
 else
   echo "skip  quint verify (QUINT_VERIFY=0)"
 fi
