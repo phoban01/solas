@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -59,11 +58,11 @@ func runPG(ctx context.Context, o options) error {
 		return err
 	}
 	defer pool.Close()
-	if _, err := pool.Exec(ctx, pgSchema); err != nil {
+	if _, err := pool.Exec(ctx, pgSchema+pgCommitFunction); err != nil {
 		return fmt.Errorf("create the bench tables: %w", err)
 	}
 	defer func() {
-		_, err := pool.Exec(context.Background(), "DROP TABLE IF EXISTS bench_counter, bench_objects, bench_events")
+		_, err := pool.Exec(context.Background(), "DROP TABLE IF EXISTS bench_counter, bench_objects, bench_events; DROP FUNCTION IF EXISTS bench_commit")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "solas-bench: clean up:", err)
 		}
@@ -178,40 +177,44 @@ func pgCounter(ctx context.Context, pool *pgxpool.Pool) error {
 	return pool.QueryRow(ctx, "UPDATE bench_counter SET n = n + 1 WHERE id = 1 RETURNING n").Scan(&n)
 }
 
-// pgCommit is the write of spec 2.3: the counter update takes the row
-// lock and gives the version; two objects of the writer are updated on
-// the condition that they still hold the version it wrote last; the
-// event is inserted at the new version. Without the counter, the new
-// version is the writer's last plus one, and there is no event. It
-// returns the new version.
+// pgCommit is the write of spec 2.3 as one round trip: the function
+// below takes the counter row lock and the version, updates two objects
+// of the writer on the condition that they still hold the version it
+// wrote last, inserts the event, and commits. The lock is held for the
+// time of the function, not for a round trip per statement. Without the
+// counter, the new version is the writer's last plus one, and there is
+// no event. It returns the new version.
 func pgCommit(ctx context.Context, pool *pgxpool.Pool, a, b int, last int64, value []byte, counter bool) (int64, error) {
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // a commit makes it a no-op
-	rv := last + 1
-	if counter {
-		if err := tx.QueryRow(ctx, "UPDATE bench_counter SET n = n + 1 WHERE id = 1 RETURNING n").Scan(&rv); err != nil {
-			return 0, err
-		}
-	}
-	for _, id := range []int{a, b} {
-		tag, err := tx.Exec(ctx, "UPDATE bench_objects SET rv = $1, value = $2 WHERE id = $3 AND rv = $4", rv, value, id, last)
-		if err != nil {
-			return 0, err
-		}
-		if tag.RowsAffected() != 1 {
-			return 0, fmt.Errorf("object %d: condition failed", id)
-		}
-	}
-	if counter {
-		if _, err := tx.Exec(ctx, "INSERT INTO bench_events (rv, id) VALUES ($1, $2)", rv, a); err != nil {
-			return 0, err
-		}
-	}
-	return rv, tx.Commit(ctx)
+	var rv int64
+	err := pool.QueryRow(ctx, "SELECT bench_commit($1, $2, $3, $4, $5)", a, b, last, value, counter).Scan(&rv)
+	return rv, err
 }
+
+// pgCommitFunction is the write as a function, so it is one round trip.
+// A condition that fails raises, which rolls the transaction back and
+// leaves the counter where it was.
+const pgCommitFunction = `
+CREATE OR REPLACE FUNCTION bench_commit(a int, b int, last bigint, v bytea, counter boolean) RETURNS bigint AS $$
+DECLARE
+  new_rv bigint := last + 1;
+  cnt int;
+BEGIN
+  IF counter THEN
+    UPDATE bench_counter SET n = n + 1 WHERE id = 1 RETURNING n INTO new_rv;
+  END IF;
+  UPDATE bench_objects SET rv = new_rv, value = v WHERE id = a AND rv = last;
+  GET DIAGNOSTICS cnt = ROW_COUNT;
+  IF cnt <> 1 THEN RAISE EXCEPTION 'object % condition failed', a; END IF;
+  UPDATE bench_objects SET rv = new_rv, value = v WHERE id = b AND rv = last;
+  GET DIAGNOSTICS cnt = ROW_COUNT;
+  IF cnt <> 1 THEN RAISE EXCEPTION 'object % condition failed', b; END IF;
+  IF counter THEN
+    INSERT INTO bench_events (rv, id) VALUES (new_rv, a);
+  END IF;
+  RETURN new_rv;
+END;
+$$ LANGUAGE plpgsql;
+`
 
 // pgPoll reads the events above the cursor, as a poll of the watch does,
 // and returns the new cursor.
