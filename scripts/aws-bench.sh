@@ -7,6 +7,9 @@
 #   aws-bench.sh item <region>   the series of #290 from this host: the
 #                                counter and commit modes of solas-bench at
 #                                1, 4, 16, and 64 writers, 20 seconds each
+#   aws-bench.sh pg up|url|item|down <region>
+#                                an Aurora Serverless v2 PostgreSQL cluster
+#                                for the Postgres rows, and the series
 #   aws-bench.sh env             print the export lines of a session of the
 #                                bench role, for eval
 #   aws-bench.sh ec2 up <region>     start one instance in the region
@@ -199,6 +202,93 @@ item)
       header=false
     done
   done
+  ;;
+pg)
+  # An Aurora Serverless v2 PostgreSQL cluster for the Postgres rows,
+  # under the identity of the CLI: the bench role has no RDS rights.
+  # pg up creates it, pg url prints the URL, pg item runs the series,
+  # pg down deletes it. The password lives under .cache, never in git.
+  region=${3:?usage: aws-bench.sh pg up|url|item|down <region>}
+  st=.cache/aws-bench/pg-$region
+  name=solas-bench-pg
+  case ${2:-} in
+  up)
+    mkdir -p "$st"
+    myip=$(curl -s https://checkip.amazonaws.com)
+    if [ ! -e "$st/password" ]; then
+      openssl rand -hex 16 >"$st/password"
+      chmod 600 "$st/password"
+    fi
+    vpc=$(aws ec2 describe-vpcs --region "$region" --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
+    if [ ! -e "$st/sg" ]; then
+      aws ec2 create-security-group --region "$region" --group-name "$name" --vpc-id "$vpc" \
+        --description "solas bench Postgres; aws-bench.sh pg down deletes it" --query GroupId --output text >"$st/sg"
+      aws ec2 authorize-security-group-ingress --region "$region" --group-id "$(cat "$st/sg")" --ip-permissions \
+        "IpProtocol=tcp,FromPort=5432,ToPort=5432,IpRanges=[{CidrIp=$myip/32}]" >/dev/null
+    fi
+    aws rds describe-db-subnet-groups --region "$region" --db-subnet-group-name "$name" >/dev/null 2>&1 \
+      || aws rds create-db-subnet-group --region "$region" --db-subnet-group-name "$name" \
+        --db-subnet-group-description "solas bench" \
+        --subnet-ids $(aws ec2 describe-subnets --region "$region" --filters Name=vpc-id,Values="$vpc" --query 'Subnets[].SubnetId' --output text) >/dev/null
+    version=$(aws rds describe-orderable-db-instance-options --region "$region" --engine aurora-postgresql \
+      --db-instance-class db.serverless --query 'OrderableDBInstanceOptions[].EngineVersion' --output text | tr '\t' '\n' | sort -V | tail -1)
+    if ! aws rds describe-db-clusters --region "$region" --db-cluster-identifier "$name" >/dev/null 2>&1; then
+      aws rds create-db-cluster --region "$region" --db-cluster-identifier "$name" \
+        --engine aurora-postgresql --engine-version "$version" --database-name solas \
+        --master-username solas --master-user-password "$(cat "$st/password")" \
+        --db-subnet-group-name "$name" --vpc-security-group-ids "$(cat "$st/sg")" \
+        --serverless-v2-scaling-configuration "MinCapacity=${SOLAS_PG_MIN_ACU:-0},MaxCapacity=${SOLAS_PG_MAX_ACU:-8}" \
+        --tags Key=Name,Value="$name" >/dev/null
+      aws rds create-db-instance --region "$region" --db-instance-identifier "$name-1" \
+        --db-cluster-identifier "$name" --engine aurora-postgresql --db-instance-class db.serverless \
+        --publicly-accessible >/dev/null
+    fi
+    echo "pg: waiting for $name ($version) in $region" >&2
+    aws rds wait db-instance-available --region "$region" --db-instance-identifier "$name-1"
+    host=$(aws rds describe-db-clusters --region "$region" --db-cluster-identifier "$name" --query 'DBClusters[0].Endpoint' --output text)
+    echo "$host" >"$st/host"
+    rtt=$(bash -c "exec 3<>/dev/tcp/$host/5432" 2>/dev/null && echo ok || echo unknown)
+    echo "pg: $host:5432, reachable: $rtt" >&2
+    echo "postgres://$host:5432/solas?sslmode=require"
+    ;;
+  url) echo "postgres://$(cat "$st/host"):5432/solas?sslmode=require" ;;
+  item)
+    go build -o solas-bench ./cmd/solas-bench
+    header=true
+    for mode in counter commit "commit --spread"; do
+      for writers in 1 4 16 64; do
+        PGUSER=solas PGPASSWORD=$(cat "$st/password") ./solas-bench \
+          --storage-url "postgres://$(cat "$st/host"):5432/solas?sslmode=require" --mode $mode \
+          --writers "$writers" --duration 20s --header="$header"
+        header=false
+      done
+    done
+    for pollers in 100 1000; do
+      PGUSER=solas PGPASSWORD=$(cat "$st/password") ./solas-bench \
+        --storage-url "postgres://$(cat "$st/host"):5432/solas?sslmode=require" --mode poll \
+        --writers "$pollers" --duration 20s --header=false
+    done
+    ;;
+  down)
+    aws rds delete-db-instance --region "$region" --db-instance-identifier "$name-1" --skip-final-snapshot >/dev/null 2>&1 || true
+    aws rds wait db-instance-deleted --region "$region" --db-instance-identifier "$name-1" 2>/dev/null || true
+    aws rds delete-db-cluster --region "$region" --db-cluster-identifier "$name" --skip-final-snapshot >/dev/null 2>&1 || true
+    aws rds wait db-cluster-deleted --region "$region" --db-cluster-identifier "$name" 2>/dev/null || true
+    aws rds delete-db-subnet-group --region "$region" --db-subnet-group-name "$name" 2>/dev/null || true
+    if [ -e "$st/sg" ]; then
+      for _ in $(seq 12); do
+        aws ec2 delete-security-group --region "$region" --group-id "$(cat "$st/sg")" 2>/dev/null && break
+        sleep 5
+      done
+    fi
+    rm -rf "$st"
+    echo "pg: deleted $name in $region" >&2
+    ;;
+  *)
+    echo "usage: aws-bench.sh pg up|url|item|down <region>" >&2
+    exit 2
+    ;;
+  esac
   ;;
 url)
   url "${2:?usage: aws-bench.sh url <region>}"
