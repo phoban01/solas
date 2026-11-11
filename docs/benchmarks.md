@@ -442,6 +442,94 @@ from 49 to 23 per second between 100 and 500 ms, most of them the polls
 of the Device and Member resources. For a lease of 30 seconds and a
 renew every 10, a lag of a tenth of a second does not matter; ADR 0004
 keeps polling at 200 ms and records the rows as the reason.
+## Postgres
+
+Method: `solas-bench --mode counter|commit|poll` on a `postgres://`
+URL, with the client alone and no store code, against an Aurora
+Serverless v2 PostgreSQL 18.6 cluster in eu-west-1 from the VM, 20 ms
+away: `scripts/aws-bench.sh pg up|item|down eu-west-1`, ADR 0026. In
+counter mode every writer updates one counter row, `UPDATE ...
+RETURNING`, in a transaction of its own. In commit mode every writer
+runs the write of spec 2.3 as one function call: the counter update
+that takes the row lock, two conditional updates of rows of its own,
+512 bytes each, and an event insert; "commit spread" is the same
+without the counter. In poll mode the writers are 8 commit writers,
+and N pollers each read the events above their cursor every 200 ms, as
+a watch of spec 4.2 does; the poll columns are the polls and the time
+of one poll query, the wait excluded. Each run lasted 20 seconds. The
+capacity column is the ACUs the cluster was at during the run, from its
+CloudWatch metric; the cluster had a maximum of 8 ACUs in the first
+series and 16 in the second.
+
+| Date | Commit | Capacity | Mode | Writers | Ops/s | p50 ms | p99 ms | Polls/s | Poll p50 ms | Poll p99 ms | Errors |
+|------|--------|---------:|------|--------:|------:|-------:|-------:|--------:|------------:|------------:|-------:|
+| 2026-11-11 | eac6443, five round trips | 8 | commit | 1 | 9.0 | 109.9 | 165.0 | | | | 0 |
+| 2026-11-11 | eac6443, five round trips | 8 | commit | 16 | 12.9 | 902.8 | 3803.3 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | counter | 1 | 50.0 | 19.7 | 26.8 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | counter | 4 | 203.0 | 19.4 | 26.0 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | counter | 16 | 687.8 | 22.1 | 42.6 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | counter | 64 | 394.6 | 119.4 | 659.8 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit | 1 | 49.3 | 20.0 | 25.6 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit | 4 | 193.4 | 20.0 | 32.7 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit | 16 | 552.6 | 26.6 | 59.1 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit | 64 | 338.2 | 132.9 | 821.4 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit spread | 1 | 45.9 | 20.2 | 43.4 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit spread | 4 | 181.1 | 20.3 | 47.4 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit spread | 16 | 776.2 | 19.9 | 27.5 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | commit spread | 64 | 2584.7 | 23.9 | 39.2 | | | | 0 |
+| 2026-11-11 | 3e15430 | 8 | poll | 100 | 382.0 | 20.0 | 31.9 | 452.8 | 19.1 | 110.8 | 0 |
+| 2026-11-11 | 3e15430 | 8 | poll | 1000 | 39.6 | 70.3 | 582.4 | 2128.4 | 24.0 | 361.8 | 0 |
+| 2026-11-11 | 3e15430 | 9 | counter | 64 | 386.2 | 113.8 | 752.8 | | | | 0 |
+| 2026-11-11 | 3e15430 | 9 | commit | 16 | 602.1 | 25.1 | 46.6 | | | | 0 |
+| 2026-11-11 | 3e15430 | 9 | commit | 64 | 338.8 | 128.8 | 850.3 | | | | 0 |
+| 2026-11-11 | 3e15430 | 9 to 12 | commit spread | 64 | 2846.2 | 22.0 | 31.9 | | | | 0 |
+| 2026-11-11 | 3e15430 | 12 | poll | 100 | 386.6 | 20.0 | 32.2 | 453.7 | 19.6 | 59.2 | 0 |
+| 2026-11-11 | 3e15430 | 12 | poll | 1000 | 254.1 | 22.7 | 134.2 | 4395.7 | 21.3 | 247.8 | 0 |
+| 2026-11-11 | 3e15430 | 16 | poll | 3000 | 71.3 | 76.0 | 496.7 | 11444.3 | 33.5 | 437.9 | 0 |
+
+**The row lock gives the order of today at the rate of etcd.** A commit
+with the counter costs one round trip at one writer, 20 ms, and scales
+with the writers to 553 to 602 per second at 16, against 30 on
+DynamoDB from the same VM: twenty times, the gap the etcd rows of
+"Same round trip" showed. The lock is held for the time of the
+function on the server, so the queue of writers moves at the server's
+pace, not at the round trip. The commit order of a resource is its
+version order, and the log has no hole: the property that ADR 0025
+gives up on DynamoDB, kept.
+
+**The write must be one round trip.** The first version of the bench
+held the lock across five statements, each a round trip from the VM,
+and got 9 to 13 commits per second whatever the number of writers: the
+lock hold time was the client's distance. A Postgres store writes
+through one statement or one function, never a transaction that waits
+on the client between statements.
+
+**Past 16 writers in flight the lock queue slows.** At 64 writers the
+counter row gives 386 to 395 updates per second, with or without the
+other statements, at a median of 115 to 130 ms, the same at 8 ACUs and
+at 9; the spread rows reach 2,846 per second at 64 writers on the same
+cluster, so it is the lock, not the server. The writers in flight on
+one resource are the servers with a batch in flight, one transaction
+each, spec 2.3; a fleet of thousands of members whose writes are rare
+keeps that number small.
+
+**Polls hold the interval to 1,000 pollers; at 3,000 the CPU is the
+limit.** At 16 ACUs, 1,000 pollers every 200 ms make 4,396 polls per
+second with a p99 of 248 ms, and the 8 writers keep 254 commits per
+second. At 8 ACUs the same run put the CPU at 100 percent, the polls
+fell to 2,128 per second, and the writers to 40. 3,000 pollers, the
+target fleet, connected directly, 3,009 connections, and made 11,444
+polls per second with a p99 of 438 ms, with the cluster at its maximum
+of 16 ACUs and the CPU at 100 percent; the writers fell to 71 per
+second at a median of 76 ms. It is the polls that take the CPU, not
+the connections. A watch that is woken by `NOTIFY` replaces 15,000
+polls per second by the rate of the events, and is the next row to
+produce before a fleet of that size.
+
+The series cost under two dollars. The connect column of the bench
+included a DNS lookup in these rows, so the round trip is the counter
+row at one writer, 20 ms; the bench now resolves the name first.
+
 ## Gatekeeper
 
 Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec

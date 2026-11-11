@@ -94,12 +94,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := run
+	pg := strings.HasPrefix(o.storageURL, "postgres://") || strings.HasPrefix(o.storageURL, "postgresql://")
 	switch o.mode {
 	case "claim":
-	case "counter", "commit":
+	case "counter", "commit", "poll":
 		runner = runItem
+		if pg {
+			runner = runPG
+		} else if o.mode == "poll" {
+			fmt.Fprintln(os.Stderr, "solas-bench: --mode poll needs a postgres:// store")
+			os.Exit(2)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "solas-bench: --mode %q: want claim, counter, or commit\n", o.mode)
+		fmt.Fprintf(os.Stderr, "solas-bench: --mode %q: want claim, counter, commit, or poll\n", o.mode)
 		os.Exit(2)
 	}
 	if err := runner(ctx, o); err != nil {

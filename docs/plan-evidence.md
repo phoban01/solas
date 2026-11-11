@@ -68,6 +68,43 @@ gives up to pass one sequencing point; the open question is the fleet
 size at which solas has to, and #291 and #293 put that number on the
 page.
 
+## The store decision (2026-11-11)
+
+The rows of M20 and the fleet size of #291 put the write path on
+DynamoDB at about 30 transactions per second per resource, 190 to 390
+members at the default lease, and a polling watch at the edge of a
+partition limit at a few thousand members. The target is 100,000
+devices and several thousand member clusters, on a managed service
+with nothing to run. DynamoDB reaches that only after three protocol
+changes: ADR 0025, lease items off the counter with a sharded sweep,
+and a watch change. The cause is one property: the order of spec 2.5
+needs a sequencer, and DynamoDB has none, so the server builds one on
+a hot item.
+
+ADR 0026 proposes a Postgres store on Aurora Serverless v2, which has
+a sequencer, the row lock, and nothing to run. Its rows came first,
+with the bench alone (benchmarks.md, "Postgres"): 553 to 602 commits
+per second per resource with the order of today kept, twenty times
+DynamoDB and the rate of etcd at the same distance; 1,000 pollers hold
+the poll interval; 3,000 pollers saturate the CPU, so a fleet of that
+size needs a watch woken by `NOTIFY`, which follows the store.
+
+What this changes in the plan:
+
+- ADR 0025 stays proposed and is not built. #279 to #286 close as not
+  planned, with the rows of #290 as the reason. The lease item idea is
+  not filed.
+- The Postgres store is a new milestone, M27, with the same contract,
+  conformance tests, and model-based traces as the other two stores.
+  Its issues follow the order of the etcd store: the URL and the spec
+  section, the store with its conformance run, the traces, the scale
+  rows, the demo, the migration between stores, and then `NOTIFY`.
+- #264, M24, M26, and M25 stay as they are, after M27.
+- cask (a per-key consensus store with no global revision) was
+  assessed and is a rejected alternative of ADR 0026: the order of
+  spec 2.5 would need a sequencer register per resource or a rewrite
+  of the list and the watch around per-object versions.
+
 ## Principles
 
 1. **Spec first, then Quint, then Duvet**, as before. A protocol change
