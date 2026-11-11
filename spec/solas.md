@@ -189,6 +189,17 @@ create the table at start when it does not exist.
 A URL with the scheme `etcd` MUST select the etcd store.
 The host part of an `etcd` URL is a list of `host:port` endpoints,
 separated by commas.
+A URL with the scheme `postgres` MUST select the Postgres store.
+The host part of a `postgres` URL is one `host:port`.
+The query key `database` sets the database name.
+The default database name is `solas`.
+The query key `sslmode` sets the TLS mode of the connection, with the
+values that the Postgres client library defines.
+The default TLS mode is `require`.
+The query key `create-tables` with the value `true` makes the server
+create the tables at start when they do not exist.
+The user and the password of a `postgres` URL MUST come from the
+environment variables `PGUSER` and `PGPASSWORD`.
 The server MUST reject a storage URL with another scheme.
 The server MUST reject a storage URL with a query key that this section
 does not name for its scheme.
@@ -209,6 +220,89 @@ A conditional write is an etcd transaction that compares the revision of
 the key.
 A watch from a revision that etcd has compacted fails with `410 Gone`.
 So the etcd store keeps the rules of section 2.5.
+
+### 2.8. Postgres store
+
+The Postgres store MUST keep its tables in a schema named by the
+storage prefix of the API server.
+The store MUST have the tables `counters`, `objects`, and `events`.
+A `counters` row holds, for one resource, the last issued resource
+version `n` and the flag `sealed`.
+A `counters` row is the counter item of section 3.1.
+An `objects` row holds, for one object, its resource, its key, the
+resource version `rv` of its last write, and the encoded object `value`.
+An `events` row holds, for one write, its resource, its resource
+version `rv`, the event type, the key, the encoded object, and the time
+`expires`.
+An `events` row is the event item of section 4.1.
+
+Every write MUST be one transaction.
+A transaction MAY carry several writes of one resource that arrived at
+the server together, as in section 2.3.
+Let `k` be the number of writes in the transaction.
+The transaction MUST first update the `counters` row of the resource,
+on condition that `sealed` is false, and set `n` to `n + k`.
+The update takes the row lock, and Postgres holds the lock until the
+transaction ends.
+So the transactions of one resource commit one at a time, in the order
+in which they took the lock.
+The writes of the transaction MUST get the versions `n + 1` to `n + k`,
+in the order of the transaction.
+The transaction MUST then run one conditional statement for each write.
+For a create, the statement MUST be an insert that fails when the key
+exists.
+For an update, the statement MUST be an update on condition that `rv`
+equals the version that the server read.
+For a delete, the statement MUST be a delete on condition that `rv`
+equals the version that the server read.
+A statement that changes no row MUST roll the transaction back, the
+counter update with it.
+The versions of a rolled back transaction are never issued, so the
+event log has no hole.
+The transaction MUST insert one `events` row for each write, with the
+version of the write.
+The server MUST run the transaction as one call of a function in the
+database.
+A lock held across a round trip to the server caps the resource at a
+few writes per second, whatever the number of writers.
+The commit order of the writes of a resource is their version order.
+So when a read sees the counter value `c`, every write with a version
+up to `c` has committed.
+When the counter update changes no row, the store is sealed, section
+12.1, and the write MUST fail with `503 ServiceUnavailable`.
+When the insert of a create fails, the server MUST return
+`409 AlreadyExists` for that write.
+When the update or the delete of a write changes no row, the server MUST
+read the object again and retry that write, as in section 2.3.
+The other writes of the transaction MUST retry in a new transaction.
+
+Every read MUST go to the writer instance of the database.
+A reader instance can lag the writer, so a read from it can miss a
+write that completed before the read started.
+A get MUST read the `objects` row.
+A list MUST read the `counters` row and the `objects` rows in one
+transaction at the `REPEATABLE READ` level.
+A snapshot at that level holds every transaction that committed before
+it started, and no other.
+So the list is a consistent snapshot at the counter value that it read.
+The list MUST return that value as its resource version, with no second
+read of the counter.
+
+A watch MUST poll the `events` rows of its resource as in section 4.2,
+with `c` from the `counters` row.
+A watch MUST keep the gap rule of section 4.3.
+Postgres does not expire rows.
+Each server MUST delete the `events` rows of each resource whose
+`expires` is in the past.
+A server MUST run that delete at a random interval between half of the
+retention time and the retention time.
+A server MUST NOT depend on the time at which another server deletes
+the expired events.
+
+The Postgres store keeps the rules of section 2.5: the conditional
+statements give the conditional write, the transaction gives atomicity,
+the lock order gives the version order and a gap-free log, and the
+snapshot gives the consistent list.
 
 ## 3. Resource versions
 
@@ -936,7 +1030,14 @@ counter item with the attribute `sealed`.
 A write that fails because the store is sealed MUST return
 `503 ServiceUnavailable`.
 
+The Postgres store seals with the flag `sealed` on the `counters` row of
+each resource.
+The counter update of each write, section 2.8, runs on condition that
+`sealed` is false, so a write cannot commit after the seal.
+To seal a resource that has no `counters` row, the tool MUST insert the
+row with `sealed` set.
 An unseal removes the attribute `sealed`.
+On the Postgres store, an unseal clears `sealed`.
 The tool MUST NOT unseal a source when the destination holds an object
 that is not in the source, or that differs from its source object except
 in resource version.
@@ -1023,6 +1124,8 @@ After a restore, every resource version MUST be above every resource
 version issued before the restore.
 On the DynamoDB store, the restore tool MUST raise each counter item to
 at least `epoch * 2^32`.
+On the Postgres store, the restore tool MUST raise `n` of each
+`counters` row to at least `epoch * 2^32`.
 On the etcd store, the operator MUST restore with
 `etcdutl snapshot restore --bump-revision` and `--mark-compacted`.
 
