@@ -106,12 +106,15 @@ not the limit.
 
 A bind and a release are two writes. A member that binds and releases
 once per device per hour makes `2 * devices / 3600` writes per second.
-At the 1000 writes per second of one DynamoDB item, the Device resource
-sustains about 1.8 million such binds and releases per hour, or 1000
-devices that each change hands twice a second. The counter is not the
-limit for a fleet of physical machines. It is the limit for a workload
-that binds and releases devices many times per second, as the bench
-does.
+This section once put the ceiling at the 1000 writes per second of one
+DynamoDB item, 1.8 million such binds and releases per hour. The rows
+of 2026-11-10 measured the item at 970 updates per second (#290), but
+the transaction that holds it commits about 30 times per second, with
+about 3 writes each, so the write path of today gives a tenth of that:
+"Fleet size" below has the fleet it supports, from the rows. The
+counter is not the limit for a fleet of physical machines. It is the
+limit for a workload that binds and releases devices many times per
+second, as the bench does.
 
 Two options, when a fleet needs more:
 
@@ -124,6 +127,61 @@ Two options, when a fleet needs more:
 - **A resource per device class.** Devices of different kinds that no
   claim selects together can live in separate resources, each with its
   own counter. This needs no protocol change, only more kinds.
+
+## Fleet size
+
+The rows of [benchmarks.md](benchmarks.md) give the write ceiling of one
+resource. This section turns it into the fleet one store supports. Each
+resource has its own counter item (ADR 0003), so the limit of the
+Member resource and the limit of the Device resource add; they do not
+share. Every number names its row.
+
+**What one resource commits.** The store commits the writes of a server
+in one transaction, spec 2.3. A bind of the bench is two writes, the
+bind and its release, so a row's transactions per second are twice its
+binds per second divided by its writes per transaction. From the VM at
+67 ms (row 93bbdf5, 8 members) that is 19 transactions per second; from
+an instance in the region (row 410a4f3, 8 members), 39. The round trip
+moves the number by two, not by thirty, because the counter item in the
+transaction serializes the members, "A run on DynamoDB" above.
+
+**Members.** A member renews its Member every `D / 3`, spec 7.3, one
+write in a transaction of its own, because a member is its own server
+and the batching of spec 2.3 joins only the writes of one server. The
+Member resource takes the transactions of one resource, so the members
+per store are the transactions per second times `D / 3`. At the default
+`D` of 30 seconds, the renews of 190 members fill the resource from
+the VM, and 390 from the region. A `D` of 5 minutes gives ten times
+that. A fleet above it renews late, and a sweeper then clears members
+that are alive, spec 8.1; the lease margin of spec 7.4 is the room it
+has.
+
+**Devices.** The Device resource takes one write per bind and one per
+release. The binds per minute at the ceiling are the row's binds per
+second times 60. A pool of `N` devices that each change hands once per
+hold time `H` needs `N / H` binds per second, so the pool a store
+supports at a mean hold time is the binds per second times `H`. The
+pool itself is bounded by the list cost, "10,000 devices" below, not by
+this; this bounds how often the pool changes hands.
+
+| Fleet | From the VM, 67 ms | In the region, 2 ms | Row |
+|-------|-------------------:|--------------------:|-----|
+| Transactions per second, one resource | 19 | 39 | 93bbdf5 and 410a4f3, 8 members, 64 devices |
+| Members per store, `D` 30 s | 190 | 390 | the same rows, times `D / 3` |
+| Members per store, `D` 5 min | 1,900 | 3,900 | the same rows, times `D / 3` |
+| Binds per minute | 1,600 | 3,500 | 93bbdf5 and 410a4f3, 8 members |
+| Binds per minute, 32 members | 1,600 | 2,800 | 93bbdf5 and 3d388b1, 32 members |
+| Binds per minute, 128 members | | 1,300 | 3d388b1, 128 members, 1,024 devices |
+| Devices that change hands once an hour | 97,000 | 208,000 | 93bbdf5 and 410a4f3, 8 members, times 3,600 |
+| Devices that change hands once a day | 2.3 million | 5.0 million | the same rows, times 86,400 |
+
+The VM rows are 20 to 67 ms from the table, and the in-region rows 2
+ms; the 128 member row is the one with 1,024 devices. The 10,000 device
+rows of the region give the same binds per second at 32 members, 48 to
+58, so a large pool does not move the ceiling. These are the numbers
+of the write path of today; ADR 0025 proposes a write path with the
+counter outside the transaction, and the item rows of #290 put its
+ceiling at about five times these.
 
 ## A run on DynamoDB
 
