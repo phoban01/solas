@@ -61,6 +61,9 @@ type store struct {
 	batch batcher
 	// q holds the statements of this store with the schema in place.
 	q queries
+	// afterListCounter runs between the counter read and the object query
+	// of a list, in tests that write at that moment.
+	afterListCounter func()
 }
 
 var _ storage.Interface = &store{}
@@ -114,18 +117,21 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 
 // queries holds the SQL of a store, with the schema name in place.
 type queries struct {
-	commit, readCounter, initCounter, initEvent, readObject, count string
+	commit, readCounter, initCounter, initEvent, readObject, readObjectRow, listObjects, listObjectsAfter, count string
 }
 
 func newQueries(schema string) queries {
 	r := func(stmt string) string { return strings.ReplaceAll(stmt, "{S}", schema) }
 	return queries{
-		commit:      r(`SELECT {S}.solas_commit($1, $2, $3, $4, $5, $6, $7)`),
-		readCounter: r(`SELECT n, sealed FROM {S}.counters WHERE resource = $1`),
-		initCounter: r(`INSERT INTO {S}.counters (resource, n) VALUES ($1, 1) ON CONFLICT DO NOTHING`),
-		initEvent:   r(`INSERT INTO {S}.events (resource, rv, type, expires) VALUES ($1, 1, 'INIT', $2)`),
-		readObject:  r(`SELECT rv, value FROM {S}.objects WHERE resource = $1 AND key = $2`),
-		count:       r(`SELECT count(*) FROM {S}.objects WHERE resource = $1`),
+		commit:           r(`SELECT {S}.solas_commit($1, $2, $3, $4, $5, $6, $7)`),
+		readCounter:      r(`SELECT n, sealed FROM {S}.counters WHERE resource = $1`),
+		initCounter:      r(`INSERT INTO {S}.counters (resource, n) VALUES ($1, 1) ON CONFLICT DO NOTHING`),
+		initEvent:        r(`INSERT INTO {S}.events (resource, rv, type, expires) VALUES ($1, 1, 'INIT', $2)`),
+		readObject:       r(`SELECT rv, value FROM {S}.objects WHERE resource = $1 AND key = $2`),
+		readObjectRow:    r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key = $2`),
+		listObjects:      r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key >= $2 AND starts_with(key, $3) ORDER BY key`),
+		listObjectsAfter: r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key > $2 AND starts_with(key, $3) ORDER BY key`),
+		count:            r(`SELECT count(*) FROM {S}.objects WHERE resource = $1`),
 	}
 }
 
