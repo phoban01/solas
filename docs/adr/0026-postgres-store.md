@@ -47,7 +47,7 @@ model-based traces. The protocol does not change.
 
 **Schema.** Three tables, in a schema named by the storage prefix.
 
-- `counters(resource PRIMARY KEY, n, sealed, epoch)`: one row per
+- `counters(resource PRIMARY KEY, n, sealed)`: one row per
   resource, the counter item of spec 3.1.
 - `objects(resource, key, rv, value, PRIMARY KEY (resource, key))`: the
   object items of spec 2.2, the value encoded as today.
@@ -93,9 +93,10 @@ jittered interval of the retention time, since Postgres has no TTL;
 spec 4.1's rule that nothing depends on the time of that delete holds
 as it is.
 
-**Seal, epoch, migrate.** `sealed` and `epoch` live on the counter row,
-so `solas migrate` and `solas restore` work as on the other stores,
-ADR 0015 and ADR 0018.
+**Seal, epoch, migrate.** `sealed` lives on the counter row. The epoch
+lives in the StoreFormat object, as on the other stores. A restore
+raises `n` of each counter row, as on DynamoDB. So `solas migrate` and
+`solas restore` work as they do today, ADR 0015 and ADR 0018.
 
 **URL.** `postgres://<host>:<port>?database=<name>&sslmode=<mode>&create-tables=true`.
 The rules of spec 2.6 hold: no path, no credentials in the URL. The
