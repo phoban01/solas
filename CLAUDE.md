@@ -120,8 +120,11 @@ Claude Code session, so heavy jobs must not overlap.
   with 503 until it has read the store
   ([docs/adr/0024-start-without-store.md](docs/adr/0024-start-without-store.md)).
 - Versions come from one counter update outside the transaction, and
-  the log is settled before a list or a delivery (proposed)
+  the log is settled before a list or a delivery (proposed, not built)
   ([docs/adr/0025-two-step-write.md](docs/adr/0025-two-step-write.md)).
+- A third store, Postgres on Aurora Serverless v2, with the same contract
+  as the other two; the row lock on the counter row keeps the order
+  ([docs/adr/0026-postgres-store.md](docs/adr/0026-postgres-store.md)).
 
 ## Writing
 
@@ -135,7 +138,7 @@ filler, no marketing adjectives, no emoji.
 - `.duvet/config.toml` and `.duvet/snapshot.txt` traceability gate
 - `cmd/solas/` the one binary: the extension server and the controller;
   `demo/k3d/` two-cluster demo
-- `docs/plan-evidence.md` the plan to close the evidence gaps (M20 to M26);
+- `docs/plan-evidence.md` the plan to close the evidence gaps (M20 to M27);
   `docs/adding-a-kind.md` what a new kind touches, and what it never does;
 - `docs/confidence.md` the trust ladder; `docs/sim-gate.md` the simulator;
   `docs/benchmarks.md` every measured number;
