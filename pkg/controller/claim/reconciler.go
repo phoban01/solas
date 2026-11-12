@@ -24,6 +24,7 @@ import (
 	claimsv1alpha1 "github.com/phoban01/solas/pkg/apis/claims/v1alpha1"
 	solasv1alpha1 "github.com/phoban01/solas/pkg/apis/solas/v1alpha1"
 	"github.com/phoban01/solas/pkg/controller/member"
+	ctrlmetrics "github.com/phoban01/solas/pkg/controller/metrics"
 )
 
 // MemberState gives the reconciler the view of this member.
@@ -278,6 +279,7 @@ func (r *Reconciler) setBound(ctx context.Context, claim *claimsv1alpha1.DeviceC
 	claim.Status.DeviceName = d.Name
 	claim.Status.MemberUID = uid
 	claim.Status.FencingToken = d.Status.FencingToken
+	ctrlmetrics.Binds.Inc()
 	return reconcile.Result{RequeueAfter: r.Resync}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 }
 

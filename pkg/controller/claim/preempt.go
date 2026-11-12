@@ -14,6 +14,7 @@ import (
 	claimsv1alpha1 "github.com/phoban01/solas/pkg/apis/claims/v1alpha1"
 	solasv1alpha1 "github.com/phoban01/solas/pkg/apis/solas/v1alpha1"
 	"github.com/phoban01/solas/pkg/controller/member"
+	ctrlmetrics "github.com/phoban01/solas/pkg/controller/metrics"
 )
 
 func (r *Reconciler) now() time.Time {
@@ -99,6 +100,7 @@ func (r *Reconciler) requestPreemption(ctx context.Context, claim *claimsv1alpha
 		}
 		return reconcile.Result{}, err
 	}
+	ctrlmetrics.PreemptionRequests.Inc()
 	log.FromContext(ctx).Info("requested preemption", "device", d.Name,
 		"holder", d.Status.ClaimRef.Namespace+"/"+d.Status.ClaimRef.Name, "priority", prio)
 	claim.Status.PreemptionTarget = d.Name
