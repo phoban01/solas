@@ -4,8 +4,8 @@ The model-based tests check that the real solas API server behaves as the
 Quint model says it does. They replay traces of `quint/solas.qnt` against
 the real Device and Member REST stores, on dynamodb-local.
 
-Run them with `devbox run mbt`, which replays the traces on dynamodb-local
-and on etcd; `MBT_STORE` picks one store. `devbox run verify` runs them too,
+Run them with `devbox run mbt`, which replays the traces on dynamodb-local,
+on etcd, and on Postgres; `MBT_STORE` picks one store. `devbox run verify` runs them too,
 and skips them when the model and the code are unchanged since a green run.
 
 ## How it works
@@ -41,7 +41,7 @@ the replay reports it.
 It covers the server side of the protocol: conditional writes, the
 holder-to-holder rule, the fencing token rule, and version preconditions
 on Members. It uses the real strategies, the real validation, the watch
-cache, and the DynamoDB store.
+cache, and each of the three stores.
 
 It does not cover the controllers. The simulator gate
 (`docs/sim-gate.md`) runs the real controllers against in-memory stores.
