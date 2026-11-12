@@ -176,7 +176,9 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,test]: A watch MUST keep the gap rule of section 4.3.
     TEXT[!SHOULD,implementation,test]: The commit function SHOULD send a notification on the channel of the
     TEXT[!SHOULD,implementation,test]: schema, with the resource and the last version of the transaction.
-    TEXT[!SHOULD,implementation]: A server SHOULD hold one connection that listens on that channel.
+    TEXT[!MAY,implementation]: A server MAY hold one connection that listens on that channel.
+    TEXT[!SHOULD]: So a mesh of more than a few tens of members SHOULD NOT listen, and
+    TEXT[!SHOULD]: polls as in section 4.2.
     TEXT[!MUST,implementation,test]: A notification MUST wake the poll of its resource, with the version
     TEXT[!MUST,implementation,test]: as `c`, as a counter read does in section 4.2.
     TEXT[!MUST,implementation]: A poll that a notification wakes MUST NOT start sooner than the poll

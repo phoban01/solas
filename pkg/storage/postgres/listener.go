@@ -13,7 +13,7 @@ import (
 )
 
 //= spec/solas.md#2-8-postgres-store
-//# A server SHOULD hold one connection that listens on that channel.
+//# A server MAY hold one connection that listens on that channel.
 
 //= spec/solas.md#2-8-postgres-store
 //# A listener needs a connection of its own, which a pooler that

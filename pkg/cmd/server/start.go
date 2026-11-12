@@ -40,6 +40,10 @@ type Options struct {
 	StorageURL     string
 	EventRetention time.Duration
 	PollInterval   time.Duration
+	// NotifyWatch gives a Postgres store a listener, so a notification of
+	// the commit wakes the pollers, spec 2.8. Off by default: the rows
+	// put its cost on the writers at a hundred listeners.
+	NotifyWatch bool
 	// Prefix separates the data of different API servers in one table.
 	// All member clusters must use the same prefix to share state.
 	Prefix string
@@ -104,6 +108,7 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 	flags.StringVar(&o.StorageVersion, "storage-version", o.StorageVersion, "Version of the solas.dev group that objects are stored in. Every member must be able to read it.")
 	flags.DurationVar(&o.EventRetention, "event-retention", o.EventRetention, "How long events stay in the event log of the DynamoDB and Postgres stores.")
 	flags.DurationVar(&o.PollInterval, "poll-interval", o.PollInterval, "How often a watch polls the event log of the DynamoDB and Postgres stores.")
+	flags.BoolVar(&o.NotifyWatch, "postgres-notify", o.NotifyWatch, "Wake the watch of a Postgres store with a notification of the commit, on a connection of its own. For a mesh of a few tens of members at most: every listener adds to the cost of each commit.")
 	flags.StringVar(&o.Prefix, "storage-prefix", o.Prefix, "Key prefix in the store. All member clusters must use the same prefix.")
 	_, _ = o.Registry.ComponentGlobalsOrRegister(basecompatibility.DefaultKubeComponent,
 		basecompatibility.NewEffectiveVersionFromString(baseversion.DefaultKubeBinaryVersion, "", ""),
@@ -178,9 +183,11 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 			return getter, err
 		}
 		//= spec/solas.md#2-8-postgres-store
-		//# A server SHOULD hold one connection that listens on that channel.
-		getter.Postgres = postgres.Config{Pool: pool, EventRetention: o.EventRetention, PollInterval: o.PollInterval,
-			Listener: postgres.NewListener(ctx, sc.PostgresURL(), o.Prefix)}
+		//# A server MAY hold one connection that listens on that channel.
+		getter.Postgres = postgres.Config{Pool: pool, EventRetention: o.EventRetention, PollInterval: o.PollInterval}
+		if o.NotifyWatch {
+			getter.Postgres.Listener = postgres.NewListener(ctx, sc.PostgresURL(), o.Prefix)
+		}
 		return getter, nil
 	}
 	if sc.Kind == storageurl.Etcd {

@@ -75,9 +75,13 @@ The cluster's `max_connections` follows its maximum capacity, about
 2,000 at 8 ACUs and 3,000 at 16. The 128 member row held 520
 connections. A fleet of a few hundred members fits; a fleet of
 thousands puts RDS Proxy in front of the cluster, which multiplexes the
-transactions of many servers over fewer connections. A `NOTIFY` watch,
-#319, needs a connection of its own per server that the proxy cannot
-carry; the deployment with the proxy keeps the polling watch.
+transactions of many servers over fewer connections.
+The `NOTIFY` watch, `--postgres-notify`, is for a mesh of a few tens
+of members: every listener adds to the cost of each commit, a hundred
+listeners take a third of the rate of the writers and a thousand
+stall them (benchmarks.md, "The watch woken by NOTIFY"), and a
+listener needs a connection of its own that the proxy cannot carry.
+A larger mesh polls.
 
 ## Credentials
 

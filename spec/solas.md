@@ -293,7 +293,12 @@ with `c` from the `counters` row.
 A watch MUST keep the gap rule of section 4.3.
 The commit function SHOULD send a notification on the channel of the
 schema, with the resource and the last version of the transaction.
-A server SHOULD hold one connection that listens on that channel.
+A server MAY hold one connection that listens on that channel.
+Every listener adds to the cost of each commit: with a hundred
+listeners the writers lose a third of their rate, and with a thousand
+they stall, docs/benchmarks.md, "Postgres".
+So a mesh of more than a few tens of members SHOULD NOT listen, and
+polls as in section 4.2.
 A notification MUST wake the poll of its resource, with the version
 as `c`, as a counter read does in section 4.2.
 A poll that a notification wakes MUST NOT start sooner than the poll

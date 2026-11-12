@@ -144,6 +144,14 @@ them all. What they say:
   100 percent, and the writers fall to 71 per second. The polls take
   the CPU, not the connections.
 
+The `NOTIFY` rows of #319, on 2026-11-12: the notification in the
+commit function costs nothing with no listener, 570 commits per
+second at 16 writers, but every listener adds to each commit. With
+100 listeners the writers fall from 381 to 222 per second; with
+1,000 they stall; 3,000 listeners exceed the connections of a 16 ACU
+cluster. So the watch polls, and the listener is an option,
+`--postgres-notify`, for a mesh of a few tens of members.
+
 So the two conditions of acceptance hold: the commit row lands at the
 etcd rows, and the poll row at 1,000 holds the interval. The 3,000
 poller row adds a condition for a fleet of that size: the watch is
@@ -160,7 +168,9 @@ the store exists, and its row comes before a deployment at that size.
   stores. `scripts/local-stores.sh` starts a Postgres container.
 - Event expiry is the server's job, not the store's. A server that is
   away for long leaves events for the others to delete.
-- Thousands of members need RDS Proxy. The deployment docs say when.
+- Thousands of members need RDS Proxy, and poll: a `NOTIFY` watch
+  costs the writers from a hundred listeners, and a listener needs a
+  connection of its own. docs/aurora.md says when.
 
 ## Rejected alternatives
 

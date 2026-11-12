@@ -541,6 +541,53 @@ The series cost under two dollars. The connect column of the bench
 included a DNS lookup in these rows, so the round trip is the counter
 row at one writer, 20 ms; the bench now resolves the name first.
 
+
+### The watch woken by NOTIFY (#319)
+
+The same bench on 2026-11-12 against a new Aurora Serverless v2 cluster
+at 2 to 16 ACUs, from the VM at 20 ms, with the commit function of
+the store, which notifies the channel of the schema at the end of
+each transaction, and `--mode poll --notify`: each poller holds a
+listener connection of its own, as a server would, and polls when a
+notification arrives, no sooner than the poll interval after its
+last poll, spec 2.8. The pollers without `--notify` poll every 200
+ms. Eight writers commit beside the pollers. The capacity column is
+the maximum of the minutes of the run, which a 20 second run shares
+with the one before.
+
+| Date | Commit | Mode | Pollers | Capacity | Commits/s | Commit p50 ms | Commit p99 ms | Polls/s | Poll p50 ms | Poll p99 ms | Errors |
+|------|--------|------|--------:|----------|----------:|--------------:|--------------:|--------:|------------:|------------:|-------:|
+| 2026-11-12 | 5bf2310 | pg commit | 16 | 9.5 ACU, CPU 32% | 570.0 | 26.0 | 55.0 | 0.0 | 0.0 | 0.0 | 0 |
+| 2026-11-12 | 5bf2310 | pg poll | 100 | 14.5 ACU, CPU 88%, 109 connections | 380.6 | 20.2 | 33.9 | 451.5 | 19.7 | 115.8 | 0 |
+| 2026-11-12 | 5bf2310 | pg poll notify | 100 | 16 ACU, CPU 100%, 209 connections | 222.4 | 23.7 | 226.5 | 484.8 | 20.7 | 227.6 | 0 |
+| 2026-11-12 | 5bf2310 | pg poll | 1000 | 16 ACU, CPU 100%, 1,009 connections | 231.4 | 22.9 | 224.5 | 4275.3 | 21.6 | 417.6 | 0 |
+| 2026-11-12 | 5bf2310 | pg poll notify | 1000 | 16 ACU, CPU 100%, 2,009 connections | 0.2 | 381.9 | 124592.8 | 4.9 | 157.1 | 17529.0 | 0 |
+| 2026-11-12 | 5bf2310 | pg poll | 3000 | 16 ACU, CPU 100%, 3,009 connections | 19.9 | 104.4 | 15712.1 | 9549.8 | 31.1 | 735.4 | 0 |
+| 2026-11-12 | 5bf2310 | pg poll notify | 3000 | 16 ACU | | | | | | | 3,000 listeners refused: `remaining connection slots are reserved` |
+
+**The notification costs the writers, and the cost grows with the
+listeners.** The commit row with the notification in the function and
+no listener is 570 per second at 16 writers, the rate of the rows
+without it. With 100 listeners the writers fall from 381 to 222 per
+second beside the same polls per second; with 1,000 listeners they
+stall at 0.2 per second with a p99 of two minutes, and the pollers,
+with almost no commit to wake them, poll five times a second in all:
+Postgres wakes every listening backend on each
+commit and serializes the commits through the notification queue. At
+3,000 the listeners do not connect: a listener is a connection of its
+own, and the cluster has about 3,000 at 16 ACUs.
+
+**So the watch polls.** The listener stays in the store behind
+`--postgres-notify`, off by default, for a mesh of a few tens of
+members where the idle load of the polls matters more than the
+writers. A mesh of hundreds or thousands of members polls every 200
+ms, as the rows of 1,000 and 3,000 pollers above measured, and puts
+RDS Proxy in front of the cluster for the connections, ADR 0026. The
+timer polls of 3,000 pollers take the CPU of a 16 ACU cluster; the
+fleet of the target needs a poll interval of a second, spec 4.2, or
+a larger cluster, and the row that says which comes before a
+deployment at that size.
+
 ### Scale on Aurora Serverless v2 (#315)
 
 Method: `SCALE_STORES=postgres devbox run scale` with `SOLAS_POSTGRES_URL`
