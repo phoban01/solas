@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the unit tests with the race detector. The storage tests need a
-# DynamoDB and an etcd. When Docker is present, the script starts
-# dynamodb-local; when etcd is present, it starts an etcd. It removes both
-# on exit. SOLAS_DYNAMODB_ENDPOINT and SOLAS_ETCD_ENDPOINT point the tests
+# DynamoDB, a Postgres, and an etcd. When Docker is present, the script starts
+# dynamodb-local and a Postgres; when etcd is present, it starts an etcd. It removes them
+# on exit. SOLAS_DYNAMODB_ENDPOINT, SOLAS_POSTGRES_URL, and SOLAS_ETCD_ENDPOINT point the tests
 # at stores that already run.
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
