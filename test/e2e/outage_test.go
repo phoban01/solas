@@ -20,7 +20,7 @@ import (
 // storeContainer returns the Docker container of the store that the mesh
 // uses now, from the storage URL in the Secret of cluster a. TestMesh
 // ends with a move to the other store, so a default run tests the outage
-// on etcd and a SOLAS_STORE=etcd run tests it on dynamodb-local.
+// on etcd, and a SOLAS_STORE=etcd or postgres run tests it on dynamodb-local.
 func storeContainer(t *testing.T) string {
 	t.Helper()
 	enc := run(t, "", "kubectl", "--kubeconfig", kubeconfig("a"), "-n", "solas-system",
@@ -28,6 +28,9 @@ func storeContainer(t *testing.T) string {
 	url, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
 	if err != nil {
 		t.Fatalf("decode the storage URL: %v", err)
+	}
+	if strings.HasPrefix(string(url), "postgres://") {
+		return "solas-pg"
 	}
 	if strings.HasPrefix(string(url), "etcd://") {
 		return "solas-etcd"

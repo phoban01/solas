@@ -139,7 +139,7 @@ func TestSoak(t *testing.T) {
 	s := &soak{t: t, store: store, rng: rand.New(rand.NewPCG(uint64(seed), uint64(seed))),
 		faults: map[string]int{}, lastUID: map[string]string{}, start: time.Now()}
 	s.clients = map[string]client.Client{"a": clientFor(t, "a"), "b": clientFor(t, "b")}
-	s.container = map[string]string{"dynamodb": "solas-ddb", "etcd": "solas-etcd"}[store]
+	s.container = map[string]string{"dynamodb": "solas-ddb", "etcd": "solas-etcd", "postgres": "solas-pg"}[store]
 	ctx := context.Background()
 	t.Cleanup(func() {
 		for _, c := range []string{s.container, "k3d-e2e-a-server-0", "k3d-e2e-b-server-0"} {

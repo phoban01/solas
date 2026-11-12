@@ -58,11 +58,11 @@ set_ready() {
 device_log() { curl -s "$device_url/log"; }
 uses_by() { device_log | grep -q "\"claim\":\"$1/work/job\",\"token\":$2,\"accepted\":$3"; }
 
-# SOLAS_STORE picks the shared store: dynamodb, the default, or etcd.
+# SOLAS_STORE picks the shared store: dynamodb, the default, etcd, or postgres.
 store=${SOLAS_STORE:-dynamodb}
 case $store in
-dynamodb | etcd) ;;
-*) fail "SOLAS_STORE=$store is not dynamodb or etcd" ;;
+dynamodb | etcd | postgres) ;;
+*) fail "SOLAS_STORE=$store is not dynamodb, etcd, or postgres" ;;
 esac
 
 scene "Setup: two k3d clusters that share one $store store (log: $setup_log)"
@@ -212,18 +212,19 @@ show a get devices
 case $store in
 dynamodb) other=etcd ;;
 etcd) other=dynamodb ;;
+postgres) other=dynamodb ;;
 esac
 scene "8. Move the mesh from $store to $other: one setting"
 # holders prints name=member/claim/token for every device.
 holders() { k a get devices -o jsonpath='{range .items[*]}{.metadata.name}={.status.claimRef.member}/{.status.claimRef.name}/{.status.fencingToken} {end}'; }
 before=$(holders)
-if [ "$store" = dynamodb ]; then
+if [ "$store" != etcd ]; then
   say "copy: solas migrate seals $store, copies every Device and Member to $other, and verifies the copy"
 else
   say "copy: solas stops, solas migrate checks that $store is quiet, copies every Device and Member to $other, and verifies the copy"
 fi
 demo/k3d/switch-store.sh copy "$other" 2>&1 | grep -v '^copy ' | sed 's/^/  /' || fail "solas migrate"
-if [ "$store" = dynamodb ]; then
+if [ "$store" != etcd ]; then
   if k a label device nic-2 moved=yes >"${TMPDIR:-/tmp}/solas-demo-write.log" 2>&1; then
     fail "a write to the sealed store passed"
   fi
