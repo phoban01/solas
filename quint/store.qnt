@@ -1,6 +1,6 @@
 // Model of one resource in the store: the counter, the event log, TTL
-// deletes, one watcher, and one lister. spec/solas.md sections 2.4, 3,
-// and 4 give the rules.
+// deletes, one watcher, and one lister. spec/solas.md sections 2.4, 2.8,
+// 3, and 4 give the rules.
 module store {
   type Watcher = {
     // The version of the last delivered event. The watch starts at 0.
@@ -34,25 +34,41 @@ module store {
   // the second counter read of a list, spec 2.4.
   const noGapCheck: bool
   const noListRecheck: bool
+  // True when a write takes its version and commits in one step: the
+  // DynamoDB transaction, spec 2.3, or the row lock of the Postgres
+  // store, spec 2.8, which is held until the commit. False when the
+  // version comes from a sequence and the commit is a later step: the
+  // negative model, where the counter runs ahead of the commits.
+  const lockOrder: bool
+  // True when a list reads the counter and the objects in one snapshot,
+  // the Postgres list of spec 2.8, and returns with no second read.
+  const snapshotList: bool
 
   var counter: int
   var log: Set[int]
+  // The versions issued and not yet committed. Empty under lockOrder.
+  var pending: Set[int]
   var w: Watcher
   var l: Lister
 
   action init = all {
     counter' = 0,
     log' = Set(),
+    pending' = Set(),
     w' = { last: 0, delivered: Set(), ordered: true, gone: false, phase: 0, c: 0 },
     l' = { phase: 0, c1: 0, q: 0, done: false, rv: 0, shows: 0 },
   }
 
   // A write increments the counter and adds its event in one
-  // transaction, spec 2.3 and 3.1.
+  // transaction, spec 2.3 and 3.1. On Postgres the row lock gives the
+  // same step: the writer of version n + 1 takes the lock after the
+  // writer of version n committed, spec 2.8.
   action write = all {
+    lockOrder,
     counter < MAXW,
     counter' = counter + 1,
     log' = log.union(Set(counter + 1)),
+    pending' = pending,
     w' = w,
     l' = l,
   }
@@ -61,12 +77,14 @@ module store {
   // transaction: the counter moves by their number and the log gets each
   // of the versions, spec 2.3.
   action batchWrite = all {
+    lockOrder,
     counter < MAXW,
     nondet k = 1.to(3).filter(x => counter + x <= MAXW).oneOf()
     all {
       counter' = counter + k,
       // Apalache needs a constant range: filter one, instead of counter + 1 to counter + k.
       log' = log.union(1.to(MAXW).filter(v => v > counter and v <= counter + k)),
+      pending' = pending,
       w' = w,
       l' = l,
     },
@@ -77,16 +95,44 @@ module store {
   // store does not change; the server then reads and writes.
   action writeGuess = {
     nondet c = 0.to(MAXW).filter(v => v <= counter).oneOf()
-    if (c == counter) write else all { counter' = counter, log' = log, w' = w, l' = l }
+    if (c == counter) write else all { lockOrder, counter' = counter, log' = log, pending' = pending, w' = w, l' = l }
+  }
+
+  // Without the lock order, a write takes its version from a sequence
+  // in one step and commits in a later one. The counter then shows a
+  // version whose write is not in the store.
+  action issue = all {
+    not(lockOrder),
+    counter < MAXW,
+    counter' = counter + 1,
+    pending' = pending.union(Set(counter + 1)),
+    log' = log,
+    w' = w,
+    l' = l,
+  }
+
+  // The commit of an issued version, in any order.
+  action commitIssued = all {
+    pending.size() > 0,
+    nondet v = pending.oneOf()
+    all {
+      counter' = counter,
+      log' = log.union(Set(v)),
+      pending' = pending.exclude(Set(v)),
+      w' = w,
+      l' = l,
+    },
   }
 
   // DynamoDB deletes an expired event, late and in any order, spec 4.1.
+  // On Postgres a server deletes it, spec 2.8.
   action expire = all {
     log.size() > 0,
     nondet v = log.oneOf()
     all {
       counter' = counter,
       log' = log.exclude(Set(v)),
+      pending' = pending,
       w' = w,
       l' = l,
     },
@@ -98,6 +144,7 @@ module store {
     w.phase == 0,
     counter' = counter,
     log' = log,
+    pending' = pending,
     w' = { ...w, phase: 1, c: counter },
     l' = l,
   }
@@ -111,6 +158,7 @@ module store {
       w.phase == 0,
       counter' = counter,
       log' = log,
+      pending' = pending,
       l' = l,
       w' = { ...w, phase: 1, c: if (c > w.last) c else w.last },
     }
@@ -126,6 +174,7 @@ module store {
       w.phase == 1,
       counter' = counter,
       log' = log,
+      pending' = pending,
       l' = l,
       if (complete or noGapCheck)
         w' = {
@@ -142,9 +191,11 @@ module store {
 
   // A list reads the counter, spec 2.4.
   action listRead = all {
+    not(snapshotList),
     l.phase == 0,
     counter' = counter,
     log' = log,
+    pending' = pending,
     w' = w,
     l' = { ...l, phase: 1, c1: counter },
   }
@@ -154,6 +205,7 @@ module store {
     l.phase == 1,
     counter' = counter,
     log' = log,
+    pending' = pending,
     w' = w,
     l' = { ...l, phase: 2, q: counter },
   }
@@ -164,6 +216,7 @@ module store {
     l.phase == 2,
     counter' = counter,
     log' = log,
+    pending' = pending,
     w' = w,
     if (noListRecheck or counter == l.c1)
       l' = { ...l, phase: 0, done: true, rv: l.c1, shows: l.q }
@@ -171,7 +224,34 @@ module store {
       l' = { ...l, phase: 0 },
   }
 
-  action step = any { write, writeGuess, batchWrite, expire, pollRead, pollHint, pollQuery, listRead, listQuery, listCheck }
+  // A list on Postgres reads the counter and the objects in one
+  // snapshot and returns the counter as its version, spec 2.8. The
+  // objects show every committed write. Under the lock order that is
+  // every write up to the counter. Without it, a version up to the
+  // counter can be pending, and the objects show the writes below the
+  // lowest pending one only.
+  action listSnapshotRead = {
+    val miss = pending.filter(v => v <= counter)
+    all {
+      snapshotList,
+      l.phase == 0,
+      counter' = counter,
+      log' = log,
+      pending' = pending,
+      w' = w,
+      l' = {
+        ...l,
+        done: true,
+        rv: counter,
+        shows: if (miss.size() == 0) counter else miss.fold(MAXW + 1, (m, v) => if (v < m) v else m) - 1,
+      },
+    }
+  }
+
+  action step = any {
+    write, writeGuess, batchWrite, issue, commitIssued, expire,
+    pollRead, pollHint, pollQuery, listRead, listQuery, listCheck, listSnapshotRead,
+  }
 
   // Delivered versions strictly increase, spec 3.2 and 4.2.
   val monotonicRV = w.ordered
@@ -194,6 +274,13 @@ module store {
   val witnessListed = not(l.done and l.rv > 0)
 }
 
+// The DynamoDB store: the transaction, and the list with two counter
+// reads around the query.
 module store3 {
-  import store(MAXW = 3, noGapCheck = false, noListRecheck = false).*
+  import store(MAXW = 3, noGapCheck = false, noListRecheck = false, lockOrder = true, snapshotList = false).*
+}
+
+// The Postgres store: the row lock, and the list in one snapshot.
+module store3pg {
+  import store(MAXW = 3, noGapCheck = false, noListRecheck = false, lockOrder = true, snapshotList = true).*
 }

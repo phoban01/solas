@@ -91,10 +91,10 @@ size needs a watch woken by `NOTIFY`, which follows the store.
 
 What this changes in the plan:
 
-- ADR 0025 stays proposed and is not built. #279 to #286 close as not
+- ADR 0025 stays proposed and is not built. #279 to #286 are closed as not
   planned, with the rows of #290 as the reason. The lease item idea is
   not filed.
-- The Postgres store is a new milestone, M27, with the same contract,
+- The Postgres store is a new milestone, M27 (#304 to #319), with the same contract,
   conformance tests, and model-based traces as the other two stores.
   Its issues follow the order of the etcd store: the URL and the spec
   section, the store with its conformance run, the traces, the scale
@@ -293,6 +293,55 @@ go back. What it lacks is evidence for each, and one rule.
   with the rollback of each, the write freeze and its length from the
   row, and the rehearsal on k3d.
 
+## M27: The Postgres store
+
+ADR 0026, accepted 2026-11-11, adds a third store behind the storage
+URL: Postgres, on Aurora Serverless v2 for a managed deployment and on
+a container for the tests and the demo. The contract, the conformance
+tests, and the model-based traces are the ones of the other two
+stores. The parent is #304. The issues follow the order of the etcd
+store, and each one is small enough for one sitting:
+
+- **#305, the spec.** Section 2.8, the Postgres store: the three
+  tables, the write as one transaction behind the row lock, the list
+  in one snapshot, the watch by polling, and the event expiry by the
+  servers. The `postgres` scheme in 2.6; the seal in 12.1 and the
+  counter raise in 13.3.
+- **#306, the model.** `quint/store.qnt` with the lock order, so the
+  list holds with one counter read; the negative model with a sequence
+  in place of the lock, which shows a list at a version whose write
+  has not committed.
+- **#307, the URL.** `postgres://<host>:<port>?database=&sslmode=&create-tables=`,
+  with the credentials in `PGUSER` and `PGPASSWORD`.
+- **#308, a Postgres for the tests.** A container from
+  `scripts/local-stores.sh` and `internal/pgtest`.
+- **#309, #310, #311, the store.** The write as one function that
+  holds the lock for its own time only, the row of 2026-11-11 says
+  why; the list in a `REPEATABLE READ` snapshot; the watch that polls
+  the log and deletes the expired events.
+- **#312, conformance.** Three subtests per conformance test, and the
+  third column of `docs/store-contract.md`.
+- **#313, the API server.** RESTOptions for the store, and a start
+  without it, ADR 0024.
+- **#314, the traces.** The model-based tests on three stores.
+- **#315, the scale rows.** `devbox run scale` on the container, then
+  on Aurora from the VM at 2 to 128 members and 10,000 devices, with
+  the capacity beside each row, and the Postgres column of "Fleet
+  size". This row closes #267.
+- **#316, the demo.** Postgres in the mesh, and `SOLAS_STORE=postgres`
+  for the demo, the e2e, and the smoke test.
+- **#317, migrate.** Seal and epoch on the counter rows, a move in
+  both directions between each pair of stores, and the playbook.
+- **#318, the docs.** Which store for which fleet, and `docs/aurora.md`:
+  the capacity, scale to zero, the connection limit, and when RDS
+  Proxy is needed.
+- **#319, `NOTIFY`.** The pollers woken by the commit, behind
+  `--postgres-notify`. The rows of 2026-11-12 put the cost on the
+  writers: a hundred listeners take a third of their rate and a
+  thousand stall them, so a mesh of more than a few tens of members
+  polls, and the fleet of the target needs a poll interval of a second
+  or a larger cluster for its 3,000 pollers.
+
 ## Order
 
 The second review changes the order. #243 first: it is one EC2 run and
@@ -312,6 +361,10 @@ only on those two rows; otherwise the write path of today stays, with
 its fleet size on the page. Then #264, M24 with #294, M26, and M25
 last. #233 and #266 of M22
 stay open and run alongside.
+
+The decision came on 2026-11-11, "The store decision" above: #279 to
+#286 are closed as not planned, and M27 comes first, then #264, M24
+with #294, M26, and M25.
 
 ## The cost of M20
 
