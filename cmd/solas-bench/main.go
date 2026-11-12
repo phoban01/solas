@@ -154,7 +154,15 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 		return g, nil, fmt.Errorf("--storage-url: %w", err)
 	}
 	if sc.Kind == storageurl.Postgres {
-		pool, err := pgxpool.New(ctx, sc.PostgresURL())
+		// Every simulated member shares this pool, so it holds enough
+		// connections for their pollers and writers at once: a server of
+		// its own has its own pool.
+		pc, err := pgxpool.ParseConfig(sc.PostgresURL())
+		if err != nil {
+			return g, nil, err
+		}
+		pc.MaxConns = int32(o.members*4 + 8)
+		pool, err := pgxpool.NewWithConfig(ctx, pc)
 		if err != nil {
 			return g, nil, err
 		}

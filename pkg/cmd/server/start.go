@@ -254,12 +254,24 @@ func (o *Options) Run(ctx context.Context) error {
 	return server.GenericAPIServer.PrepareRun().RunWithContext(ctx)
 }
 
+// postgresPoolSize is the connections of the pool of a server.
+const postgresPoolSize = 32
+
 // postgresPool returns the pool of the Postgres store. The pool opens
 // no connection until the first query, so the server starts when the
 // store does not answer, spec 16.1.
 func (o *Options) postgresPool(ctx context.Context, sc storageurl.Config) (*pgxpool.Pool, error) {
 	o.poolOnce.Do(func() {
-		o.pool, o.poolErr = pgxpool.New(ctx, sc.PostgresURL())
+		cfg, err := pgxpool.ParseConfig(sc.PostgresURL())
+		if err != nil {
+			o.poolErr = err
+			return
+		}
+		// One connection for the batcher and one for the poller of each
+		// resource, and the rest for reads; the default of the driver is
+		// the CPU count, which a server with five resources outgrows.
+		cfg.MaxConns = postgresPoolSize
+		o.pool, o.poolErr = pgxpool.NewWithConfig(ctx, cfg)
 	})
 	return o.pool, o.poolErr
 }
