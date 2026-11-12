@@ -518,12 +518,13 @@ func run(ctx context.Context, o options) error {
 	if binds+conflicts > 0 {
 		conflictRate = 100 * float64(conflicts) / float64(binds+conflicts)
 	}
-	store := "dynamodb"
-	if counter == nil {
-		store = "etcd"
-	}
+	sc, _ := storageurl.Parse(o.storageURL)
+	store := string(sc.Kind)
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
 	tx, txWrites := dynamo.BatchStats()
+	if sc.Kind == storageurl.Postgres {
+		tx, txWrites = postgres.BatchStats()
+	}
 	perTx := "-"
 	if tx > 0 {
 		perTx = fmt.Sprintf("%.1f", float64(txWrites)/float64(tx))
