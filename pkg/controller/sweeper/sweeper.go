@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	solasv1alpha1 "github.com/phoban01/solas/pkg/apis/solas/v1alpha1"
+	ctrlmetrics "github.com/phoban01/solas/pkg/controller/metrics"
 )
 
 // observation is what this cluster saw of another Member, spec 8.1.
@@ -100,6 +101,7 @@ func (s *Sweeper) expire(ctx context.Context) error {
 	if s.seen == nil {
 		s.seen = map[string]observation{}
 	}
+	ctrlmetrics.MembersObserved.Set(float64(len(members.Items)))
 	listed := map[string]bool{}
 	for i := range members.Items {
 		m := &members.Items[i]
@@ -136,6 +138,7 @@ func (s *Sweeper) expire(ctx context.Context) error {
 		switch {
 		case err == nil:
 			log.FromContext(ctx).Info("deleted an expired member", "member", m.Name, "uid", m.UID)
+			ctrlmetrics.MembersSwept.Inc()
 			delete(s.seen, m.Name)
 		case apierrors.IsConflict(err), apierrors.IsNotFound(err):
 			// The member renewed, or another sweeper deleted it first.
@@ -189,6 +192,12 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 				cleared.Status.Offer = nil
 			}
 			if err := s.Client.Status().Update(ctx, cleared); err == nil {
+				if staleReq {
+					ctrlmetrics.ReferencesCleared.WithLabelValues(ctrlmetrics.ClearedPreemption).Inc()
+				}
+				if staleOffer {
+					ctrlmetrics.ReferencesCleared.WithLabelValues(ctrlmetrics.ClearedOffer).Inc()
+				}
 				*d = *cleared
 			} else if !apierrors.IsConflict(err) && !apierrors.IsNotFound(err) {
 				return err
@@ -214,6 +223,7 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 		switch {
 		case err == nil:
 			log.FromContext(ctx).Info("freed a device of a gone member", "device", d.Name, "member", ref.Member)
+			ctrlmetrics.ReferencesCleared.WithLabelValues(ctrlmetrics.ClearedClaimRef).Inc()
 			s.mu.Lock()
 			delete(s.stale, d.Name)
 			s.mu.Unlock()

@@ -5,6 +5,7 @@ package member
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	solasv1alpha1 "github.com/phoban01/solas/pkg/apis/solas/v1alpha1"
+	ctrlmetrics "github.com/phoban01/solas/pkg/controller/metrics"
 	"github.com/phoban01/solas/pkg/format"
 )
 
@@ -204,7 +206,13 @@ func (m *Manager) renew(ctx context.Context) error {
 	send := m.Clock.Now()
 	mem.Status.RenewTime = ptrMicro(send)
 	m.reportFormats(&mem.Status)
+	started := time.Now()
 	err := m.Client.Status().Update(ctx, mem)
+	ctrlmetrics.RenewSeconds.Observe(time.Since(started).Seconds())
+	ctrlmetrics.StoreSealed.Set(sealedValue(err))
+	if err != nil {
+		ctrlmetrics.RenewErrors.WithLabelValues(renewCause(err)).Inc()
+	}
 	switch {
 	case err == nil:
 		m.set(mem, send)
@@ -336,4 +344,24 @@ func (m *Manager) maxFormat() int32 {
 		return m.MaxFormat
 	}
 	return format.Max
+}
+
+// sealedValue is 1 when err says the store is sealed, spec 12.1, and 0
+// otherwise, for the gauge.
+func sealedValue(err error) float64 {
+	if err != nil && apierrors.IsServiceUnavailable(err) && strings.Contains(err.Error(), "store is sealed") {
+		return 1
+	}
+	return 0
+}
+
+// renewCause names the cause of a failed renew for the counter.
+func renewCause(err error) string {
+	switch {
+	case sealedValue(err) == 1:
+		return "sealed"
+	case apierrors.IsServiceUnavailable(err):
+		return "unavailable"
+	}
+	return "other"
 }
