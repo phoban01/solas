@@ -15,6 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/storage"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 // maxListRetries bounds the retries when writes land during a list.
@@ -83,6 +85,7 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 			return err
 		}
 		if before != after {
+			storemetrics.Conflicts.WithLabelValues(s.groupResource.String(), storemetrics.CauseList).Inc()
 			//= spec/solas.md#2-4-reads
 			//# If the two counter values differ, the list MUST retry.
 			if attempt >= maxListRetries {
