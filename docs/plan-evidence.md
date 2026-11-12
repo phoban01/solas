@@ -335,9 +335,12 @@ store, and each one is small enough for one sitting:
 - **#318, the docs.** Which store for which fleet, and `docs/aurora.md`:
   the capacity, scale to zero, the connection limit, and when RDS
   Proxy is needed.
-- **#319, `NOTIFY`.** The pollers woken by the commit, and the 3,000
-  poller row again. The row of 2026-11-11 puts the CPU at 100 percent
-  at that size with polling alone.
+- **#319, `NOTIFY`.** The pollers woken by the commit, behind
+  `--postgres-notify`. The rows of 2026-11-12 put the cost on the
+  writers: a hundred listeners take a third of their rate and a
+  thousand stall them, so a mesh of more than a few tens of members
+  polls, and the fleet of the target needs a poll interval of a second
+  or a larger cluster for its 3,000 pollers.
 
 ## Order
 
