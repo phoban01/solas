@@ -164,16 +164,16 @@ supports at a mean hold time is the binds per second times `H`. The
 pool itself is bounded by the list cost, "10,000 devices" below, not by
 this; this bounds how often the pool changes hands.
 
-| Fleet | From the VM, 67 ms | In the region, 2 ms | Row |
-|-------|-------------------:|--------------------:|-----|
-| Transactions per second, one resource | 19 | 39 | 93bbdf5 and 410a4f3, 8 members, 64 devices |
-| Members per store, `D` 30 s | 190 | 390 | the same rows, times `D / 3` |
-| Members per store, `D` 5 min | 1,900 | 3,900 | the same rows, times `D / 3` |
-| Binds per minute | 1,600 | 3,500 | 93bbdf5 and 410a4f3, 8 members |
-| Binds per minute, 32 members | 1,600 | 2,800 | 93bbdf5 and 3d388b1, 32 members |
-| Binds per minute, 128 members | | 1,300 | 3d388b1, 128 members, 1,024 devices |
-| Devices that change hands once an hour | 97,000 | 208,000 | 93bbdf5 and 410a4f3, 8 members, times 3,600 |
-| Devices that change hands once a day | 2.3 million | 5.0 million | the same rows, times 86,400 |
+| Fleet | DynamoDB from the VM, 67 ms | DynamoDB in the region, 2 ms | Postgres from the VM, 20 ms | Row |
+|-------|----------------------------:|-----------------------------:|----------------------------:|-----|
+| Transactions per second, one resource | 19 | 39 | 290 | 93bbdf5 and 410a4f3, 8 members, 64 devices; d745a8c, 32 members, 256 devices |
+| Members per store, `D` 30 s | 190 | 390 | 2,900 | the same rows, times `D / 3` |
+| Members per store, `D` 5 min | 1,900 | 3,900 | 29,000 | the same rows, times `D / 3` |
+| Binds per minute | 1,600 | 3,500 | 8,900 | 93bbdf5 and 410a4f3, 8 members; d745a8c, 8 members |
+| Binds per minute, 32 members | 1,600 | 2,800 | 24,000 | 93bbdf5 and 3d388b1, 32 members; d745a8c, 32 members |
+| Binds per minute, 128 members | | 1,300 | 8,600 | 3d388b1 and d745a8c, 128 members, 1,024 devices, at 16 ACUs |
+| Devices that change hands once an hour | 97,000 | 208,000 | 1.45 million | 93bbdf5 and 410a4f3, 8 members, times 3,600; d745a8c, 32 members |
+| Devices that change hands once a day | 2.3 million | 5.0 million | 35 million | the same rows, times 86,400 |
 
 The VM rows are 20 to 67 ms from the table, and the in-region rows 2
 ms; the 128 member row is the one with 1,024 devices. The 10,000 device
@@ -182,6 +182,23 @@ rows of the region give the same binds per second at 32 members, 48 to
 of the write path of today; ADR 0025 proposes a write path with the
 counter outside the transaction, and the item rows of #290 put its
 ceiling at about five times these.
+
+**Postgres.** The Postgres column is the 32 member row on Aurora
+Serverless v2 from the VM (benchmarks.md, "Scale on Aurora Serverless
+v2"): 404 binds per second, 290 transactions per second with 2.8
+writes each, on a cluster at its maximum of 8 ACUs. The row lock
+measured alone commits 553 to 602 times per second ("Postgres"), so
+the resource has about twice that left, with more members or a larger
+cluster; the 128 member row at 16 ACUs is bound by the VM that runs
+the 128 servers. A bind pays about five round trips, so a single
+member binds at the pace of the round trip, 100 ms at 20 ms, and the
+rate grows with the members: 42 at 2, 148 at 8, 404 at 32. The
+Member resource takes the same transactions per second, so the
+members per store at the default lease are about 2,900, and the
+target of several thousand clusters is a lease of a few minutes or a
+second resource, not a store change. The connection count is the
+other limit: 128 members held 520 connections, and a fleet of
+thousands needs RDS Proxy, ADR 0026.
 
 ## A run on DynamoDB
 

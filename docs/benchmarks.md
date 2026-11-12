@@ -50,6 +50,17 @@ seconds with 8 claims per member.
 | 2026-11-09 | e76c984 | etcd | 2 | 16 | 4030.1 | 29.6 | 0.5 | 4.8 | 0.6 | 4.9 | 108.0 | 0.1 | 2.0 | - | 0 |
 | 2026-11-09 | e76c984 | etcd | 8 | 64 | 3336.2 | 32.8 | 2.6 | 16.7 | 3.4 | 18.8 | 106.4 | 1.0 | 9.4 | - | 0 |
 | 2026-11-09 | e76c984 | etcd | 32 | 256 | 1117.4 | 37.4 | 18.9 | 68.4 | 46.6 | 793.6 | 110.6 | 27.2 | 638.4 | - | 0 |
+| 2026-11-12 | 8e31298 | postgres | 2 | 16 | 293.4 | 40.9 | 10.7 | 77.9 | 4.4 | 38.8 | 110.4 | 5.3 | 42.0 | - | 0 |
+| 2026-11-12 | 8e31298 | postgres | 8 | 64 | 297.3 | 41.4 | 32.1 | 183.0 | 34.6 | 236.8 | 115.6 | 29.7 | 190.6 | - | 0 |
+| 2026-11-12 | 8e31298 | postgres | 32 | 256 | 269.9 | 41.2 | 149.8 | 502.9 | 200.8 | 514.6 | 203.2 | 149.2 | 438.2 | - | 0 |
+
+The Postgres rows of 2026-11-12 ran on the container of
+`scripts/local-stores.sh`, with fsync off as the etcd runs, on the same
+VM. Postgres gives about 300 binds per second at 2 to 32 members, a
+tenth of etcd on the same host and ten times dynamodb-local at 8
+members, and holds the rate to 32 members. The lock queue of the
+counter row is the ceiling, as the rows of "Postgres" below measured
+it alone.
 
 These rows replace the six rows of commit 47da523, which the same runs
 produced with an earlier tool that started the clock before every
@@ -530,6 +541,65 @@ The series cost under two dollars. The connect column of the bench
 included a DNS lookup in these rows, so the round trip is the counter
 row at one writer, 20 ms; the bench now resolves the name first.
 
+### Scale on Aurora Serverless v2 (#315)
+
+Method: `SCALE_STORES=postgres devbox run scale` with `SOLAS_POSTGRES_URL`
+from `scripts/aws-bench.sh pg up eu-west-1`, on 2026-11-12, from the
+VM at 20 ms. The cluster is Aurora Serverless v2 PostgreSQL 18.6 with a
+minimum of 2 ACUs and a maximum of 8, and a second series at a maximum
+of 16 for the rows that reached 8. Each run lasted 20 seconds with 8
+claims per member, and one run 300 seconds. The capacity column is the
+maximum of `ServerlessDatabaseCapacity` and `CPUUtilization` in the
+minutes of the run, which CloudWatch keeps per minute, so a 20 second
+run shares its minute with the one before. The bench pool holds four
+connections per member, commit d745a8c; the first series of the day,
+with the driver's default of nine for the whole process, gave 61 binds
+per second at 8 members with a list p50 of 225 ms, the pool queue and
+not the store.
+
+| Date | Commit | Region, connect, capacity | Members | Devices | Run | Binds/s | Conflict % | Bind p50 ms | Bind p99 ms | List p50 ms | List p99 ms | Sync ms | Lag p50 ms | Lag p99 ms | Writes/tx | Errors |
+|------|--------|---------------------------|--------:|--------:|----:|--------:|-----------:|------------:|------------:|------------:|------------:|--------:|-----------:|-----------:|----------:|-------:|
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 2.5 ACU, CPU 28% | 2 | 16 | 20 s | 41.8 | 42.8 | 99.4 | 232.4 | 40.2 | 83.8 | 327.6 | 43.0 | 111.7 | 2.9 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 5.5 ACU, CPU 64% | 8 | 64 | 20 s | 147.7 | 45.6 | 88.8 | 288.0 | 44.3 | 112.4 | 427.0 | 45.6 | 110.1 | 2.7 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 5.5 to 8 ACU, CPU 64 to 100% | 32 | 256 | 20 s | 403.9 | 45.6 | 118.9 | 596.4 | 61.3 | 525.0 | 422.2 | 54.3 | 243.0 | 2.8 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 8 ACU, CPU 100% | 128 | 1024 | 20 s | 110.7 | 46.2 | 1400.6 | 10899.3 | 97.7 | 7295.1 | 1548.1 | 133.2 | 3287.2 | 3.2 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 16, at 15.5 ACU, CPU 97% | 128 | 1024 | 20 s | 143.2 | 44.8 | 832.3 | 4774.7 | 413.4 | 5923.4 | 637.5 | 216.1 | 2699.2 | 2.5 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 8 ACU, CPU 100% | 2 | 10000 | 20 s | 113.9 | 0.0 | 34.0 | 61.5 | 48.5 | 88.2 | 323.9 | 42.8 | 96.8 | 5.1 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 8 ACU, CPU 76% | 8 | 10000 | 20 s | 378.4 | 0.2 | 37.7 | 103.9 | 61.3 | 167.8 | 428.3 | 47.8 | 138.2 | 3.6 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 16, at 8 ACU | 2 | 10000 | 20 s | 79.0 | 0.1 | 45.4 | 93.9 | 75.6 | 141.3 | 543.2 | 62.4 | 132.8 | 5.6 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 16, at 8 ACU, CPU 26% | 8 | 10000 | 20 s | 280.6 | 0.3 | 48.6 | 128.1 | 88.0 | 186.3 | 542.1 | 66.5 | 153.9 | 3.9 | 0 |
+| 2026-11-12 | d745a8c | eu-west-1, 20 ms, max 8, at 8 ACU, CPU 59% | 8 | 64 | 300 s | 144.1 | 44.7 | 89.0 | 327.3 | 52.8 | 128.1 | 424.9 | 50.9 | 139.8 | 2.7 | 0 |
+
+**The bind rate grows with the members until the cluster's CPU.** 42
+binds per second at 2 members, 148 at 8, and 404 at 32, against 12, 11,
+and 15 on DynamoDB from the same VM and 58 at 8 members from inside
+the region. A bind on Postgres pays about five round trips, 100 ms at
+20 ms each, so each member binds at the pace of the round trip, and
+more members add binds until the store is busy: at 32 members the
+cluster was at its maximum of 8 ACUs with the CPU at 100 percent. The
+32 member row is 290 transactions per second on the Device resource,
+half the commit ceiling of the row lock measured alone, "Postgres"
+above. The five minute run at 8 members gives the same rate as the 20
+second one, 144 against 148, so the numbers are not a warm cluster.
+
+**128 members need more capacity, and then the VM.** At a maximum of 8
+ACUs the 128 member row fell to 111 binds per second with the CPU at
+100 percent and a bind p99 of 11 seconds. At a maximum of 16 the
+cluster took 15.5 ACUs and gave 143, with the bind p50 at 0.8 seconds
+and the list p99 at 6 seconds; 128 servers with their caches on a VM
+with nine CPUs is the other half of that row, as the DynamoDB rows at
+128 members found.
+
+**10,000 devices.** The list stays under 90 ms at the median at 2 and
+8 members from the cache, a member syncs the pool in 0.3 to 0.5
+seconds, and the binds are 114 to 378 per second with no conflicts,
+more than the 64 device rows: the claims rarely pick the same device.
+The rows at 16 are lower than the rows at 8 by a fifth to a third,
+within the noise of 20 second runs on a cluster that scales.
+
+**What it costs.** The cluster ran for about an hour at 2 to 16 ACUs,
+under three dollars with the storage, and `pg down` deleted it.
+
 ## Gatekeeper
 
 Method: `go test ./pkg/gatekeeper/ -run TestGatekeeperLatency -v`, spec
@@ -572,6 +642,13 @@ is 10 seconds, as in the demo.
 | 2026-11-10 | d8fecb7 | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 4.5 | 11.1 |
 | 2026-11-10 | 55e3a3b | DynamoDB eu-west-1, about 40 ms | 1 | 50 | 5.2 | 9.6 |
 | 2026-11-10 | 55e3a3b | DynamoDB eu-west-1, about 40 ms | 4 | 50 | 2.4 | 20.8 |
+| 2026-11-12 | d745a8c | Postgres, Aurora eu-west-1, 20 ms | 1 | 50 | 6.3 | 7.9 |
+| 2026-11-12 | d745a8c | Postgres, Aurora eu-west-1, 20 ms | 4 | 50 | 2.3 | 21.7 |
+
+On Aurora Serverless v2 from the VM the burst takes the time it takes
+on dynamodb-local: 6.3 seconds with one worker and 2.3 with four, the
+round trips of a bind and nothing else, because the row lock cancels
+no transaction.
 
 With one worker a cluster binds one claim per reconcile, list and write
 in turn. Four workers bind two and a half times as fast on a local
