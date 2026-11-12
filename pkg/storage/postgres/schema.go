@@ -56,27 +56,29 @@ const (
 //# version `rv`, the event type, the key, the encoded object, and the time
 //# `expires`.
 
-// ddl is the schema, with {S} for the quoted schema name. Every statement
+// ddl is the schema, with {S} for the quoted schema name. The keys use
+// the C collation, so their order is the byte order of the storage keys,
+// which the continue token of a list assumes. Every statement
 // is safe to run again.
 const ddl = `
 CREATE SCHEMA IF NOT EXISTS {S};
 CREATE TABLE IF NOT EXISTS {S}.counters (
-  resource text PRIMARY KEY,
+  resource text COLLATE "C" PRIMARY KEY,
   n bigint NOT NULL,
   sealed boolean NOT NULL DEFAULT false
 );
 CREATE TABLE IF NOT EXISTS {S}.objects (
-  resource text NOT NULL,
-  key text NOT NULL,
+  resource text COLLATE "C" NOT NULL,
+  key text COLLATE "C" NOT NULL,
   rv bigint NOT NULL,
   value bytea NOT NULL,
   PRIMARY KEY (resource, key)
 );
 CREATE TABLE IF NOT EXISTS {S}.events (
-  resource text NOT NULL,
+  resource text COLLATE "C" NOT NULL,
   rv bigint NOT NULL,
   type text NOT NULL,
-  key text NOT NULL DEFAULT '',
+  key text COLLATE "C" NOT NULL DEFAULT '',
   value bytea,
   prev bytea,
   expires timestamptz NOT NULL,
