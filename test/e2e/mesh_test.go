@@ -382,7 +382,7 @@ func holders(ctx context.Context, t *testing.T, c client.Client) map[string]stri
 func moveStore(clients map[string]client.Client) features.Func {
 	return func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 		other := "etcd"
-		if os.Getenv("SOLAS_STORE") == "etcd" {
+		if s := os.Getenv("SOLAS_STORE"); s == "etcd" || s == "postgres" {
 			other = "dynamodb"
 		}
 		before := holders(ctx, t, clients["a"])
@@ -425,8 +425,18 @@ spec:
 `
 		run(t, claim, "kubectl", "--kubeconfig", kubeconfig("a"), "apply", "-f", "-")
 		waitPhase(t, clients["a"], "after-move", claimsv1alpha1.ClaimBound, 60*time.Second)
-		if h := holder(ctx, clients["b"], "nic-2"); h != "a/after-move/1" {
-			t.Errorf("nic-2 holder = %s, want a/after-move/1", h)
+		// The first bind on the new store gets token 1 in the epoch of the
+		// store, spec 13.2: a destination with counters, DynamoDB or
+		// Postgres, moved to a new epoch in the move, spec 12.2, so the
+		// token carries it in its high 32 bits; an etcd destination keeps
+		// epoch 0.
+		h := holder(ctx, clients["b"], "nic-2")
+		var token uint64
+		if _, err := fmt.Sscanf(h, "a/after-move/%d", &token); err != nil || token&0xffffffff != 1 {
+			t.Errorf("nic-2 holder = %s, want a/after-move/<epoch * 2^32 + 1>", h)
+		}
+		if epoch := token >> 32; (other == "etcd") != (epoch == 0) {
+			t.Errorf("nic-2 token after the move to %s has epoch %d", other, epoch)
 		}
 		return ctx
 	}

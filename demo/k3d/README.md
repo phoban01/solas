@@ -2,7 +2,7 @@
 
 Two Kubernetes clusters share one pool of devices. They have no link to
 each other. Each cluster runs solas and reads and writes one shared store:
-a DynamoDB table, or an etcd cluster. The store is the only thing they
+a DynamoDB table, an etcd cluster, or a Postgres database. The store is the only thing they
 share.
 
 ## Run it
@@ -16,7 +16,7 @@ devbox run demo-down   # remove the clusters, the stores, and the network
 and `demo/k3d/down.sh` also work on their own: outside devbox, they run
 themselves again through devbox, which has the tools they need.
 
-The demo runs on DynamoDB. To run it on etcd, set one variable:
+The demo runs on DynamoDB. To run it on etcd or on Postgres, set one variable:
 
 ```sh
 SOLAS_STORE=etcd devbox run demo
@@ -24,8 +24,9 @@ SOLAS_STORE=etcd devbox run demo
 
 `SOLAS_STORE` picks the storage URL that each cluster gets, from
 `mesh.sh url`. Nothing else changes: the clusters, the manifests, and
-the scenes are the same. `SOLAS_STORE=etcd devbox run e2e` runs the
-e2e test on etcd.
+the scenes are the same. `SOLAS_STORE=etcd devbox run e2e` or
+`SOLAS_STORE=postgres devbox run e2e` runs the
+e2e test on that store.
 
 The demo needs Docker and about 2 GB of free memory. It uses k3d
 (ADR 0009), and `amazon/dynamodb-local` (ADR 0007) or etcd (ADR 0014).
@@ -69,11 +70,12 @@ higher token first, so it rejects the lower one.
 - `cmd/solas-demo`: the device gatekeeper (`device`), the actuator that
   checks nothing (`actuator`), and the workload
   (`workload`). They are not part of solas.
-- `mesh.sh up|down|url dynamodb|etcd`: the Docker network `solas-mesh`,
-  the table container `solas-ddb`, and the etcd container `solas-etcd`.
+- `mesh.sh up|down|url dynamodb|etcd|postgres`: the Docker network `solas-mesh`,
+  the table container `solas-ddb`, the etcd container `solas-etcd`, and
+  the Postgres container `solas-pg`.
 - `join.sh <name>`: the k3d cluster `e2e-<name>`, with solas deployed.
   Its kubeconfig goes to `demo/k3d/.kube/<name>`.
-- `switch-store.sh [copy|point] etcd|dynamodb`: moves the mesh to the other
+- `switch-store.sh [copy|point] dynamodb|etcd|postgres`: moves the mesh to another
   store. `copy` runs `solas migrate`; `point` sets the new storage URL in
   each cluster and restarts solas.
 - `demo.sh`: the scenes above, with a check after each one.

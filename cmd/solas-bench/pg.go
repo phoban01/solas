@@ -7,14 +7,18 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	storageurl "github.com/phoban01/solas/pkg/storage"
 )
 
 // The Postgres modes measure what a Postgres store would give, with the
 // client alone and no API server, before any store code exists. The URL
-// is a pgx connection URL; the credentials come from PGUSER and
+// is the storage URL of spec 2.6; the credentials come from PGUSER and
 // PGPASSWORD, as the store's URL rule needs, spec 2.6.
 //
 //   - counter: every writer runs UPDATE ... RETURNING on one counter row,
@@ -39,7 +43,11 @@ INSERT INTO bench_counter (id, n) VALUES (1, 0) ON CONFLICT DO NOTHING;
 `
 
 func runPG(ctx context.Context, o options) error {
-	cfg, err := pgxpool.ParseConfig(o.storageURL)
+	sc, err := storageurl.Parse(o.storageURL)
+	if err != nil {
+		return fmt.Errorf("--storage-url: %w", err)
+	}
+	cfg, err := pgxpool.ParseConfig(sc.PostgresURL())
 	if err != nil {
 		return fmt.Errorf("--storage-url: %w", err)
 	}
@@ -79,6 +87,44 @@ func runPG(ctx context.Context, o options) error {
 		}
 	}
 
+	// The listeners of --notify connect before the clock starts, 64 at a
+	// time: thousands of TLS connections from one process take longer
+	// than a run, and a server has its listener up before it serves.
+	var listeners []*pgx.Conn
+	if o.mode == "poll" && o.notify {
+		listeners = make([]*pgx.Conn, o.writers)
+		sem := make(chan struct{}, 64)
+		var lwg sync.WaitGroup
+		var lerr atomic.Int64
+		for i := range listeners {
+			lwg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer lwg.Done()
+				defer func() { <-sem }()
+				conn, err := pgx.Connect(ctx, cfg.ConnConfig.ConnString())
+				if err == nil {
+					_, err = conn.Exec(ctx, "LISTEN bench")
+				}
+				if err != nil {
+					if lerr.Add(1) <= 5 {
+						fmt.Fprintln(os.Stderr, "solas-bench: listener:", err)
+					}
+					return
+				}
+				listeners[i] = conn
+			}()
+		}
+		lwg.Wait()
+		if n := lerr.Load(); n > 0 {
+			return fmt.Errorf("%d of %d listeners did not connect", n, o.writers)
+		}
+		defer func() {
+			for _, c := range listeners {
+				_ = c.Close(context.Background())
+			}
+		}()
+	}
 	var st, polls itemStats
 	stop := make(chan struct{})
 	timer := time.AfterFunc(o.duration, func() { close(stop) })
@@ -136,6 +182,10 @@ func runPG(ctx context.Context, o options) error {
 	if o.mode == "poll" {
 		for i := 0; i < o.writers; i++ {
 			wg.Add(1)
+			if o.notify {
+				go notifyPoller(ctx, &wg, stop, pool, listeners[i], &polls)
+				continue
+			}
 			var cursor int64
 			go loop(func() error {
 				next, err := pgPoll(ctx, pool, cursor)
@@ -154,6 +204,9 @@ func runPG(ctx context.Context, o options) error {
 	}
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
 	mode := "pg " + o.mode
+	if o.mode == "poll" && o.notify {
+		mode = "pg poll notify"
+	}
 	if o.mode == "commit" && o.spread {
 		mode = "pg commit spread"
 	}
@@ -210,6 +263,7 @@ BEGIN
   IF cnt <> 1 THEN RAISE EXCEPTION 'object % condition failed', b; END IF;
   IF counter THEN
     INSERT INTO bench_events (rv, id) VALUES (new_rv, a);
+    PERFORM pg_notify('bench', new_rv::text);
   END IF;
   RETURN new_rv;
 END;
@@ -247,4 +301,63 @@ func pgConnectTime(ctx context.Context, host string, port uint16) (time.Duration
 	d := time.Since(from)
 	_ = conn.Close()
 	return d, nil
+}
+
+// notifyPoller is a poller of --notify: it listens on the channel of
+// the bench schema, as a server does, spec 2.8, and reads the events
+// above its cursor when a notification arrives. The listener is a
+// connection of its own, opened before the run; the poll goes through
+// the pool.
+func notifyPoller(ctx context.Context, wg *sync.WaitGroup, stop <-chan struct{}, pool *pgxpool.Pool, conn *pgx.Conn, s *itemStats) {
+	defer wg.Done()
+	lctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-stop:
+		case <-lctx.Done():
+		}
+		cancel()
+	}()
+	// wake holds one signal: the notifications that arrive during a poll
+	// join the next one, and a poll starts no sooner than the poll
+	// interval after the last, spec 2.8.
+	wake := make(chan struct{}, 1)
+	go func() {
+		defer close(wake)
+		for {
+			if _, err := conn.WaitForNotification(lctx); err != nil {
+				return
+			}
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	var cursor int64
+	var last time.Time
+	for range wake {
+		if wait := 200*time.Millisecond - time.Since(last); wait > 0 {
+			select {
+			case <-lctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+		last = time.Now()
+		from := time.Now()
+		next, err := pgPoll(ctx, pool, cursor)
+		if ctx.Err() != nil || lctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			if s.errors.Add(1) <= 5 {
+				fmt.Fprintln(os.Stderr, "solas-bench:", err)
+			}
+			continue
+		}
+		cursor = next
+		s.done(time.Since(from))
+	}
 }

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Starts the local stores for tests and benchmarks: dynamodb-local in
-# Docker and an etcd from the devbox profile. Source this file, then call
-# start_local_stores. It exports SOLAS_DYNAMODB_ENDPOINT and
+# Docker, a Postgres in Docker, and an etcd from the devbox profile.
+# Source this file, then call
+# start_local_stores. It exports SOLAS_DYNAMODB_ENDPOINT,
+# SOLAS_POSTGRES_URL with PGUSER and PGPASSWORD, and
 # SOLAS_ETCD_ENDPOINT, and leaves a store that already runs alone when
 # its variable is set. It registers the cleanup in the array `cleanup`,
 # which the caller runs on exit:
 #   trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
 
 ddb_image=amazon/dynamodb-local:3.3.1
+pg_image=postgres:18-alpine
 cleanup=()
 
 # wait_port <port> waits until something listens on the port.
@@ -19,6 +22,22 @@ wait_port() {
     sleep 0.2
   done
   echo "nothing listens on port $1" >&2
+  return 1
+}
+
+
+# wait_pg <container> waits until the Postgres in the container accepts
+# connections. The port opens before the server is ready, so this asks
+# the server.
+wait_pg() {
+  for _ in $(seq 100); do
+    if docker exec "$1" pg_isready -q -U solas 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "postgres in $1 is not ready" >&2
+  docker logs "$1" >&2
   return 1
 }
 
@@ -78,5 +97,26 @@ start_local_stores() {
     echo "$tag: etcd at $SOLAS_ETCD_ENDPOINT"
   elif [ -z "${SOLAS_ETCD_ENDPOINT:-}" ]; then
     echo "$tag: no etcd; nothing that needs etcd runs"
+  fi
+
+  if [ -z "${SOLAS_POSTGRES_URL:-}" ] && command -v docker >/dev/null \
+    && docker info >/dev/null 2>&1; then
+    local pg="solas-pg-$tag-$$" pgport
+    # SOLAS_POSTGRES_FSYNC=1 keeps fsync on, for a benchmark of what it costs.
+    local pg_fsync=off
+    [ -n "${SOLAS_POSTGRES_FSYNC:-}" ] && pg_fsync=on
+    docker run -d --rm --name "$pg" -p 127.0.0.1::5432 \
+      -e POSTGRES_USER=solas -e POSTGRES_PASSWORD=solas -e POSTGRES_DB=solas \
+      --tmpfs /var/lib/postgresql "$pg_image" -c fsync=$pg_fsync >/dev/null
+    cleanup+=("docker rm -f $pg >/dev/null 2>&1 || true")
+    pgport=$(docker port "$pg" 5432/tcp | head -1 | sed 's/.*://')
+    wait_pg "$pg"
+    export SOLAS_POSTGRES_URL="postgres://127.0.0.1:$pgport?sslmode=disable&create-tables=true"
+    export PGUSER=solas PGPASSWORD=solas
+    echo "$tag: postgres at $SOLAS_POSTGRES_URL"
+  elif [ -z "${SOLAS_POSTGRES_URL:-}" ]; then
+    echo "$tag: no Docker; nothing that needs Postgres runs"
+  elif [ "${SOLAS_POSTGRES_URL}" != none ]; then
+    echo "$tag: Postgres at $SOLAS_POSTGRES_URL"
   fi
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/phoban01/solas/internal/ddbtest"
 	"github.com/phoban01/solas/internal/etcdtest"
+	"github.com/phoban01/solas/internal/pgtest"
 )
 
 // openDynamo opens a store on a new table in dynamodb-local.
@@ -41,4 +42,11 @@ func open(t *testing.T, u, prefix string) *Store {
 	}
 	t.Cleanup(s.Close)
 	return s
+}
+
+// openPostgres opens a store in a new schema of the test Postgres.
+func openPostgres(t *testing.T) (*Store, string) {
+	t.Helper()
+	u := pgtest.URL(t)
+	return open(t, u, pgtest.Prefix(t)), u
 }

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/jackc/pgx/v5/pgxpool"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
@@ -43,6 +44,7 @@ import (
 	memberregistry "github.com/phoban01/solas/pkg/registry/solas/member"
 	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
+	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // options are the flags of the tool.
@@ -63,6 +65,9 @@ type options struct {
 	mode    string
 	writers int
 	spread  bool
+	// notify makes the pollers of the poll mode wait for a notification
+	// of the commit, each on a connection of its own, instead of a timer.
+	notify bool
 	// pollInterval is the watch poll interval of the DynamoDB store.
 	pollInterval time.Duration
 }
@@ -80,6 +85,7 @@ func main() {
 	fs.StringVar(&o.mode, "mode", "claim", "claim: simulated members bind and release; counter: writers add to one item; commit: writers put two items of their own in a transaction (ADR 0025, #290)")
 	fs.IntVar(&o.writers, "writers", 4, "goroutines of an item mode")
 	fs.BoolVar(&o.spread, "spread", false, "commit mode: give each writer a partition key of its own, instead of the one partition key of a resource")
+	fs.BoolVar(&o.notify, "notify", false, "poll mode on Postgres: each poller listens for the notification of the commit on a connection of its own, and polls on it instead of every 200 ms")
 	fs.DurationVar(&o.pollInterval, "poll-interval", dynamo.DefaultPollInterval, "how often a watch polls the event log of the DynamoDB store, spec 4.2")
 	fs.Int64Var(&o.maxUnits, "max-units", 10_000_000, "stop the run when its DynamoDB request units (calls counted by the tool) pass this; a cost guard on a real table")
 	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")
@@ -94,7 +100,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := run
-	pg := strings.HasPrefix(o.storageURL, "postgres://") || strings.HasPrefix(o.storageURL, "postgresql://")
+	pg := strings.HasPrefix(o.storageURL, "postgres://")
 	switch o.mode {
 	case "claim":
 	case "counter", "commit", "poll":
@@ -150,6 +156,27 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 	sc, err := storageurl.Parse(o.storageURL)
 	if err != nil {
 		return g, nil, fmt.Errorf("--storage-url: %w", err)
+	}
+	if sc.Kind == storageurl.Postgres {
+		// Every simulated member shares this pool, so it holds enough
+		// connections for their pollers and writers at once: a server of
+		// its own has its own pool.
+		pc, err := pgxpool.ParseConfig(sc.PostgresURL())
+		if err != nil {
+			return g, nil, err
+		}
+		pc.MaxConns = int32(o.members*4 + 8)
+		pool, err := pgxpool.NewWithConfig(ctx, pc)
+		if err != nil {
+			return g, nil, err
+		}
+		if sc.CreateTables {
+			if err := postgres.EnsureTables(ctx, pool, o.prefix); err != nil {
+				return g, nil, err
+			}
+		}
+		g.Postgres = postgres.Config{Pool: pool, EventRetention: postgres.DefaultEventRetention, PollInterval: o.pollInterval}
+		return g, nil, nil
 	}
 	if sc.Kind == storageurl.Etcd {
 		g.EtcdServers = sc.Endpoints
@@ -503,12 +530,13 @@ func run(ctx context.Context, o options) error {
 	if binds+conflicts > 0 {
 		conflictRate = 100 * float64(conflicts) / float64(binds+conflicts)
 	}
-	store := "dynamodb"
-	if counter == nil {
-		store = "etcd"
-	}
+	sc, _ := storageurl.Parse(o.storageURL)
+	store := string(sc.Kind)
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
 	tx, txWrites := dynamo.BatchStats()
+	if sc.Kind == storageurl.Postgres {
+		tx, txWrites = postgres.BatchStats()
+	}
 	perTx := "-"
 	if tx > 0 {
 		perTx = fmt.Sprintf("%.1f", float64(txWrites)/float64(tx))

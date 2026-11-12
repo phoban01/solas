@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test: one k3d cluster serves kubectl get devices from one store in
 # the cluster. SOLAS_STORE picks it: dynamodb (dynamodb-local, the default)
-# or etcd. It takes the e2e lock, because heavy runs must not overlap.
+# etcd, or postgres. It takes the e2e lock, because heavy runs must not overlap.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -57,13 +57,18 @@ dynamodb)
   kubectl -n solas-system rollout status deploy/dynamodb-local --timeout=180s >/dev/null
   url="dynamodb://solas?create-table=true&endpoint=http://dynamodb-local.solas-system.svc:8000"
   ;;
+postgres)
+  kubectl apply -f deploy/postgres/ >/dev/null
+  kubectl -n solas-system rollout status deploy/postgres --timeout=180s >/dev/null
+  url="postgres://postgres.solas-system.svc:5432?sslmode=disable&create-tables=true"
+  ;;
 etcd)
   kubectl apply -f deploy/etcd/ >/dev/null
   kubectl -n solas-system rollout status deploy/etcd --timeout=180s >/dev/null
   url="etcd://etcd.solas-system.svc:2379"
   ;;
 *)
-  echo "smoke: SOLAS_STORE=$store is not dynamodb or etcd"
+  echo "smoke: SOLAS_STORE=$store is not dynamodb, etcd, or postgres"
   exit 1
   ;;
 esac

@@ -15,6 +15,7 @@ import (
 	"k8s.io/apiserver/pkg/registry/rest"
 
 	"github.com/phoban01/solas/internal/etcdtest"
+	"github.com/phoban01/solas/internal/teststore"
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/apiserver"
 	"github.com/phoban01/solas/pkg/registry/solas/device"
@@ -27,12 +28,18 @@ import (
 // TestEtcdRESTOptions runs the Device REST store on etcd: a create, a
 // conditional update with a stale resource version, and a list.
 func TestEtcdRESTOptions(t *testing.T) {
-	getter := apiserver.RESTOptionsGetter{
+	runRESTOptions(t, apiserver.RESTOptionsGetter{
 		EtcdServers:     etcdtest.Servers(t),
 		Codec:           apiserver.StorageCodec(),
 		EncodeVersioner: apiserver.StorageVersioner(),
 		Prefix:          etcdtest.Prefix(t),
-	}
+	})
+}
+
+// runRESTOptions runs the Device REST store on a getter: a create, a
+// conditional update with a stale resource version, and a list.
+func runRESTOptions(t *testing.T, getter apiserver.RESTOptionsGetter) {
+	t.Helper()
 	r, _, err := device.NewREST(apiserver.Scheme, getter)
 	if err != nil {
 		t.Fatal(err)
@@ -78,4 +85,14 @@ func TestEtcdRESTOptions(t *testing.T) {
 	if len(items) != 1 || items[0].Spec.Description != "first" {
 		t.Fatalf("list = %+v, want d1 with description first", items)
 	}
+}
+
+//= spec/solas.md#2-6-storage-url
+//= type=test
+//# A URL with the scheme `postgres` MUST select the Postgres store.
+
+// TestPostgresRESTOptions runs the Device REST store on Postgres, as
+// TestEtcdRESTOptions does on etcd.
+func TestPostgresRESTOptions(t *testing.T) {
+	runRESTOptions(t, teststore.Postgres(t))
 }

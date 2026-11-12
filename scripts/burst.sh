@@ -3,8 +3,9 @@
 # script measures how long until every one is Bound, with W claim
 # workers. It prints one row: store, workers, claims, seconds, binds per
 # second. The store is dynamodb-local or etcd on the mesh (SOLAS_STORE),
-# or a real table when SOLAS_DYNAMODB_URL is set, with the bench role's
-# session in the cluster's Secret. It takes the e2e lock.
+# a real table when SOLAS_DYNAMODB_URL is set, with the bench role's
+# session in the cluster's Secret, or a Postgres when SOLAS_POSTGRES_URL is
+# set. It takes the e2e lock.
 #   burst.sh <workers> [claims]     default 50 claims
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -26,7 +27,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -n "${SOLAS_DYNAMODB_URL:-}" ]; then
+if [ -n "${SOLAS_POSTGRES_URL:-}" ]; then
+  # A Postgres store outside the mesh: PGUSER and PGPASSWORD go to the
+  # Secret of the cluster through solas_install.
+  url=$SOLAS_POSTGRES_URL
+  store=postgres
+elif [ -n "${SOLAS_DYNAMODB_URL:-}" ]; then
   eval "$(scripts/aws-bench.sh env)"
   url=$SOLAS_DYNAMODB_URL
   store=dynamodb

@@ -1,6 +1,7 @@
 # Move a mesh to another store
 
-A mesh runs on one store: a DynamoDB table or an etcd cluster (ADR
+A mesh runs on one store: a DynamoDB table, an etcd cluster, or a
+Postgres database (ADR
 0014). This page moves the `Device` and `Member` objects of the mesh to
 another store, and then moves every member cluster to it. Spec section
 12 has the rules, and ADR 0015 has the reasons. `quint/migrate.qnt`
@@ -94,6 +95,40 @@ tool checks that they stopped:
      -p '{"stringData":{"url":"dynamodb://solas?region=eu-west-1"}}'
    kubectl -n solas-system scale deploy/solas --replicas=1
    ```
+
+## From or to Postgres
+
+A Postgres store seals as a DynamoDB store does, with the flag `sealed`
+on the counter row of each resource, spec 12.1. The steps of "From
+DynamoDB" apply, with the URLs changed. The tool reads the user and the
+password of each Postgres URL from `PGUSER` and `PGPASSWORD`, so a move
+between two Postgres databases needs the same user and password on
+both.
+
+1. Seal, copy, and verify:
+
+   ```sh
+   PGUSER=solas PGPASSWORD=... solas migrate \
+     --from 'dynamodb://solas?region=eu-west-1' \
+     --to 'postgres://db.example.com:5432?sslmode=require&create-tables=true'
+   ```
+
+   A Postgres destination moves to a new epoch after the copy, and the
+   tool raises its counters, as on DynamoDB, so no version goes back.
+
+2. In each member cluster, set the `url` key of the Secret
+   `solas-storage`, and the keys `pgUser` and `pgPassword`, then
+   restart `deploy/solas`:
+
+   ```sh
+   kubectl -n solas-system patch secret solas-storage --type=merge \
+     -p '{"stringData":{"url":"postgres://db.example.com:5432?sslmode=require","pgUser":"solas","pgPassword":"..."}}'
+   kubectl -n solas-system rollout restart deploy/solas
+   ```
+
+3. Check the claims and the holders as in "From DynamoDB". A move away
+   from Postgres is the same with the URLs swapped: the tool seals the
+   Postgres source, and `solas unseal` rolls it back.
 
 ## Why each cluster must switch within D
 

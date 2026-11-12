@@ -6,7 +6,7 @@
 #   SCALE_MEMBERS   member counts, default "2 8 32"
 #   SCALE_CLAIMS    claims per member, default 8
 #   SCALE_DURATION  length of each run, default 10s
-#   SCALE_STORES    stores to run on, default "dynamodb etcd"
+#   SCALE_STORES    stores to run on, default "dynamodb etcd postgres"
 #   SCALE_POLL      watch poll interval of the DynamoDB store, default 200ms
 #   SCALE_DEVICES   devices in the pool, default members * claims
 #   SOLAS_DYNAMODB_URL  a storage URL of a real table, from
@@ -34,11 +34,15 @@ cleanup+=("rm -rf $(dirname "$bin")")
 go build -o "$bin" ./cmd/solas-bench
 
 header=true
-for store in ${SCALE_STORES:-dynamodb etcd}; do
+for store in ${SCALE_STORES:-dynamodb etcd postgres}; do
   case $store in
   dynamodb)
     [ -n "${SOLAS_DYNAMODB_ENDPOINT:-}" ] || continue
     url=${SOLAS_DYNAMODB_URL:-"dynamodb://solas-bench?create-table=true&endpoint=$SOLAS_DYNAMODB_ENDPOINT"}
+    ;;
+  postgres)
+    [ -n "${SOLAS_POSTGRES_URL:-}" ] || continue
+    url=$SOLAS_POSTGRES_URL
     ;;
   etcd)
     [ -n "${SOLAS_ETCD_ENDPOINT:-}" ] || continue

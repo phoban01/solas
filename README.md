@@ -31,14 +31,23 @@ must use the same store.
 | DynamoDB | `dynamodb://<table>?region=<region>` |
 | dynamodb-local | `dynamodb://solas?create-table=true&endpoint=http://<host>:8000` |
 | etcd | `etcd://<host:port>[,<host:port>...]` |
+| Postgres | `postgres://<host>:<port>?database=<name>&sslmode=<mode>&create-tables=true`, with `PGUSER` and `PGPASSWORD` in the environment |
 
 The Deployment in `deploy/solas` reads the URL from the key `url` of the
 Secret `solas-storage`. `deploy/solas/config/storage.yaml` is an example.
 On DynamoDB, the AWS credentials come from the environment or from the
+same Secret; on Postgres, the keys `pgUser` and `pgPassword` of the
 same Secret. [docs/store-contract.md](docs/store-contract.md) shows what
 the protocol needs from a store, and how each store keeps it.
 [docs/scale.md](docs/scale.md), "Fleet size", has the members, binds per
 minute, and devices one store supports, from the measured rows.
+
+Which store for which fleet, from those rows: a DynamoDB table carries
+a mesh of up to a few hundred members at the default lease and about
+two thousand binds a minute; a Postgres database on Aurora Serverless
+v2 carries a few thousand members and about twenty thousand binds a
+minute, with nothing to run, [docs/aurora.md](docs/aurora.md); etcd
+gives the most at a short round trip, for a mesh that runs its own.
 
 To move a running mesh to another store, see
 [docs/migrate.md](docs/migrate.md): `solas migrate` seals the old store,

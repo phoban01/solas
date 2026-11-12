@@ -15,6 +15,7 @@ import (
 
 	"github.com/phoban01/solas/pkg/storage/dynamo"
 	"github.com/phoban01/solas/pkg/storage/guard"
+	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // eventsHistoryWindow is the history of the watch cache. The cacher needs
@@ -23,9 +24,13 @@ const eventsHistoryWindow = 5 * time.Minute
 
 // RESTOptionsGetter gives each resource a store, behind its storage guard
 // and the watch cache:
-// the DynamoDB store, or the etcd store when EtcdServers is set, spec 2.6.
+// the DynamoDB store, the etcd store when EtcdServers is set, or the
+// Postgres store when Postgres.Pool is set, spec 2.6.
 type RESTOptionsGetter struct {
 	Dynamo dynamo.Config
+	// Postgres holds the pool of the Postgres store. When it is set, the
+	// getter picks the Postgres store and ignores Dynamo.
+	Postgres postgres.Config
 	// EtcdServers holds the etcd client URLs. When it is set, the getter
 	// picks the etcd store and ignores Dynamo.
 	EtcdServers []string
@@ -151,6 +156,10 @@ func (g RESTOptionsGetter) RawStorage(config *storagebackend.ConfigForResource, 
 	newFunc, newListFunc func() runtime.Object) (storage.Interface, factory.DestroyFunc, error) {
 	if len(g.EtcdServers) > 0 {
 		return generic.NewRawStorage(config, newFunc, newListFunc, resourcePrefix)
+	}
+	if g.Postgres.Pool != nil {
+		s, err := postgres.New(g.Postgres, config.Codec, newFunc, newListFunc, config.Prefix, resourcePrefix, config.GroupResource)
+		return s, func() {}, err
 	}
 	s, err := dynamo.New(g.Dynamo, config.Codec, newFunc, newListFunc, config.Prefix, resourcePrefix, config.GroupResource)
 	return s, func() {}, err

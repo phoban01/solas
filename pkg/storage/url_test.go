@@ -15,6 +15,10 @@ import (
 
 //= spec/solas.md#2-6-storage-url
 //= type=test
+//# A URL with the scheme `postgres` MUST select the Postgres store.
+
+//= spec/solas.md#2-6-storage-url
+//= type=test
 //# The server MUST reject a storage URL with another scheme.
 
 //= spec/solas.md#2-6-storage-url
@@ -35,6 +39,9 @@ func TestParseURL(t *testing.T) {
 		{"dynamodb://solas/", Config{Kind: DynamoDB, Table: "solas"}},
 		{"etcd://127.0.0.1:2379", Config{Kind: Etcd, Endpoints: []string{"http://127.0.0.1:2379"}}},
 		{"etcd://etcd-0:2379,etcd-1:2379", Config{Kind: Etcd, Endpoints: []string{"http://etcd-0:2379", "http://etcd-1:2379"}}},
+		{"postgres://db.example.com:5432", Config{Kind: Postgres, Host: "db.example.com:5432", Database: "solas", SSLMode: "require"}},
+		{"postgres://127.0.0.1:5432?database=bench&sslmode=disable&create-tables=true",
+			Config{Kind: Postgres, Host: "127.0.0.1:5432", Database: "bench", SSLMode: "disable", CreateTables: true}},
 	}
 	for _, c := range ok {
 		got, err := Parse(c.url)
@@ -65,6 +72,12 @@ func TestParseURL(t *testing.T) {
 		"etcd://127.0.0.1:0",
 		"etcd://127.0.0.1:2379?region=x",
 		"etcd://:2379",
+		"postgres://",
+		"postgres://db.example.com",
+		"postgres://db.example.com:5432/solas",
+		"postgres://solas:secret@db.example.com:5432",
+		"postgres://db.example.com:5432?user=solas",
+		"postgres://db.example.com:5432?create-tables=maybe",
 	}
 	for _, u := range bad {
 		if c, err := Parse(u); err == nil {
@@ -81,5 +94,18 @@ func TestURLString(t *testing.T) {
 	odd := Config{Kind: DynamoDB, Table: "solas", Endpoint: "http://h:8000/a&b"}
 	if back, err := Parse(odd.String()); err != nil || back.Endpoint != odd.Endpoint {
 		t.Errorf("Parse(%q) = %+v, %v; want the endpoint back", odd.String(), back, err)
+	}
+}
+
+func TestPostgresURL(t *testing.T) {
+	c, err := Parse("postgres://db.example.com:5432?database=bench&sslmode=verify-full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := c.PostgresURL(), "postgres://db.example.com:5432/bench?sslmode=verify-full"; got != want {
+		t.Errorf("PostgresURL() = %q, want %q", got, want)
+	}
+	if got, want := c.String(), "postgres://db.example.com:5432?database=bench&sslmode=verify-full"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
 	}
 }

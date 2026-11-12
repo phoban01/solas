@@ -99,9 +99,11 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[implementation]: The query key `create-table` with the value `true` makes the server
     TEXT[implementation]: create the table at start when it does not exist.
     TEXT[!MUST,implementation,test]: A URL with the scheme `etcd` MUST select the etcd store.
-    TEXT[!MUST]: A URL with the scheme `postgres` MUST select the Postgres store.
-    TEXT[!MUST]: The user and the password of a `postgres` URL MUST come from the
-    TEXT[!MUST]: environment variables `PGUSER` and `PGPASSWORD`.
+    TEXT[!MUST,implementation,test]: A URL with the scheme `postgres` MUST select the Postgres store.
+    TEXT[implementation]: The query key `create-tables` with the value `true` makes the server
+    TEXT[implementation]: create the tables at start when they do not exist.
+    TEXT[!MUST,implementation]: The user and the password of a `postgres` URL MUST come from the
+    TEXT[!MUST,implementation]: environment variables `PGUSER` and `PGPASSWORD`.
     TEXT[!MUST,implementation,test]: The server MUST reject a storage URL with another scheme.
     TEXT[!MUST,implementation,test]: The server MUST reject a storage URL with a query key that this section
     TEXT[!MUST,implementation,test]: does not name for its scheme.
@@ -114,51 +116,85 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: Every read of the etcd store MUST be a linearizable read.
 
   SECTION: [2.8. Postgres store](#2-8-postgres-store)
-    TEXT[!MUST]: The Postgres store MUST keep its tables in a schema named by the
-    TEXT[!MUST]: storage prefix of the API server.
-    TEXT[!MUST]: The store MUST have the tables `counters`, `objects`, and `events`.
-    TEXT[!MUST]: Every write MUST be one transaction.
-    TEXT[!MAY]: A transaction MAY carry several writes of one resource that arrived at
-    TEXT[!MAY]: the server together, as in section 2.3.
-    TEXT[!MUST]: The transaction MUST first update the `counters` row of the resource,
-    TEXT[!MUST]: on condition that `sealed` is false, and set `n` to `n + k`.
-    TEXT[!MUST]: The writes of the transaction MUST get the versions `n + 1` to `n + k`,
-    TEXT[!MUST]: in the order of the transaction.
-    TEXT[!MUST]: The transaction MUST then run one conditional statement for each write.
-    TEXT[!MUST]: For a create, the statement MUST be an insert that fails when the key
-    TEXT[!MUST]: exists.
-    TEXT[!MUST]: For an update, the statement MUST be an update on condition that `rv`
-    TEXT[!MUST]: equals the version that the server read.
-    TEXT[!MUST]: For a delete, the statement MUST be a delete on condition that `rv`
-    TEXT[!MUST]: equals the version that the server read.
-    TEXT[!MUST]: A statement that changes no row MUST roll the transaction back, the
-    TEXT[!MUST]: counter update with it.
-    TEXT[!MUST]: The transaction MUST insert one `events` row for each write, with the
-    TEXT[!MUST]: version of the write.
-    TEXT[!MUST]: The server MUST run the transaction as one call of a function in the
-    TEXT[!MUST]: database.
-    TEXT[!MUST]: When the counter update changes no row, the store is sealed, section
-    TEXT[!MUST]: 12.1, and the write MUST fail with `503 ServiceUnavailable`.
-    TEXT[!MUST]: When the insert of a create fails, the server MUST return
-    TEXT[!MUST]: `409 AlreadyExists` for that write.
-    TEXT[!MUST]: When the update or the delete of a write changes no row, the server MUST
-    TEXT[!MUST]: read the object again and retry that write, as in section 2.3.
-    TEXT[!MUST]: The other writes of the transaction MUST retry in a new transaction.
+    TEXT[!MUST,implementation]: The Postgres store MUST keep its tables in a schema named by the
+    TEXT[!MUST,implementation]: storage prefix of the API server.
+    TEXT[!MUST,implementation]: The store MUST have the tables `counters`, `objects`, and `events`.
+    TEXT[implementation]: A `counters` row holds, for one resource, the last issued resource
+    TEXT[implementation]: version `n` and the flag `sealed`.
+    TEXT[implementation]: An `objects` row holds, for one object, its resource, its key, the
+    TEXT[implementation]: resource version `rv` of its last write, and the encoded object `value`.
+    TEXT[implementation]: An `events` row holds, for one write, its resource, its resource
+    TEXT[implementation]: version `rv`, the event type, the key, the encoded object, and the time
+    TEXT[implementation]: `expires`.
+    TEXT[!MUST,implementation]: Every write MUST be one transaction.
+    TEXT[!MAY,implementation]: A transaction MAY carry several writes of one resource that arrived at
+    TEXT[!MAY,implementation]: the server together, as in section 2.3.
+    TEXT[!MUST,implementation]: The transaction MUST first update the `counters` row of the resource,
+    TEXT[!MUST,implementation]: on condition that `sealed` is false, and set `n` to `n + k`.
+    TEXT[implementation]: The update takes the row lock, and Postgres holds the lock until the
+    TEXT[implementation]: transaction ends.
+    TEXT[test]: So the transactions of one resource commit one at a time, in the order
+    TEXT[test]: in which they took the lock.
+    TEXT[!MUST,implementation]: The writes of the transaction MUST get the versions `n + 1` to `n + k`,
+    TEXT[!MUST,implementation]: in the order of the transaction.
+    TEXT[!MUST,implementation]: The transaction MUST then run one conditional statement for each write.
+    TEXT[!MUST,implementation,test]: For a create, the statement MUST be an insert that fails when the key
+    TEXT[!MUST,implementation,test]: exists.
+    TEXT[!MUST,implementation,test]: For an update, the statement MUST be an update on condition that `rv`
+    TEXT[!MUST,implementation,test]: equals the version that the server read.
+    TEXT[!MUST,implementation,test]: For a delete, the statement MUST be a delete on condition that `rv`
+    TEXT[!MUST,implementation,test]: equals the version that the server read.
+    TEXT[!MUST,implementation,test]: A statement that changes no row MUST roll the transaction back, the
+    TEXT[!MUST,implementation,test]: counter update with it.
+    TEXT[test]: The versions of a rolled back transaction are never issued, so the
+    TEXT[test]: event log has no hole.
+    TEXT[!MUST,implementation]: The transaction MUST insert one `events` row for each write, with the
+    TEXT[!MUST,implementation]: version of the write.
+    TEXT[!MUST,implementation]: The server MUST run the transaction as one call of a function in the
+    TEXT[!MUST,implementation]: database.
+    TEXT[implementation]: A lock held across a round trip to the server caps the resource at a
+    TEXT[implementation]: few writes per second, whatever the number of writers.
+    TEXT[test]: The commit order of the writes of a resource is their version order.
+    TEXT[!MUST,implementation,test]: When the counter update changes no row, the store is sealed, section
+    TEXT[!MUST,implementation,test]: 12.1, and the write MUST fail with `503 ServiceUnavailable`.
+    TEXT[!MUST,implementation]: When the insert of a create fails, the server MUST return
+    TEXT[!MUST,implementation]: `409 AlreadyExists` for that write.
+    TEXT[!MUST,implementation]: When the update or the delete of a write changes no row, the server MUST
+    TEXT[!MUST,implementation]: read the object again and retry that write, as in section 2.3.
+    TEXT[!MUST,implementation]: The other writes of the transaction MUST retry in a new transaction.
     TEXT[!MUST]: Every read MUST go to the writer instance of the database.
-    TEXT[!MUST]: A get MUST read the `objects` row.
-    TEXT[!MUST]: A list MUST read the `counters` row and the `objects` rows in one
-    TEXT[!MUST]: transaction at the `REPEATABLE READ` level.
-    TEXT[!MUST]: The list MUST return that value as its resource version, with no second
-    TEXT[!MUST]: read of the counter.
-    TEXT[!MUST]: A watch MUST poll the `events` rows of its resource as in section 4.2,
-    TEXT[!MUST]: with `c` from the `counters` row.
-    TEXT[!MUST]: A watch MUST keep the gap rule of section 4.3.
-    TEXT[!MUST]: Each server MUST delete the `events` rows of each resource whose
-    TEXT[!MUST]: `expires` is in the past.
-    TEXT[!MUST]: A server MUST run that delete at a random interval between half of the
-    TEXT[!MUST]: retention time and the retention time.
-    TEXT[!MUST]: A server MUST NOT depend on the time at which another server deletes
-    TEXT[!MUST]: the expired events.
+    TEXT[!MUST,implementation]: A get MUST read the `objects` row.
+    TEXT[!MUST,implementation,test]: A list MUST read the `counters` row and the `objects` rows in one
+    TEXT[!MUST,implementation,test]: transaction at the `REPEATABLE READ` level.
+    TEXT[implementation]: A snapshot at that level holds every transaction that committed before
+    TEXT[implementation]: it started, and no other.
+    TEXT[implementation,test]: So the list is a consistent snapshot at the counter value that it read.
+    TEXT[!MUST,implementation,test]: The list MUST return that value as its resource version, with no second
+    TEXT[!MUST,implementation,test]: read of the counter.
+    TEXT[!MUST,implementation]: A watch MUST poll the `events` rows of its resource as in section 4.2,
+    TEXT[!MUST,implementation]: with `c` from the `counters` row.
+    TEXT[!MUST,test]: A watch MUST keep the gap rule of section 4.3.
+    TEXT[!SHOULD,implementation,test]: The commit function SHOULD send a notification on the channel of the
+    TEXT[!SHOULD,implementation,test]: schema, with the resource and the last version of the transaction.
+    TEXT[!MAY,implementation]: A server MAY hold one connection that listens on that channel.
+    TEXT[!SHOULD]: So a mesh of more than a few tens of members SHOULD NOT listen, and
+    TEXT[!SHOULD]: polls as in section 4.2.
+    TEXT[!MUST,implementation,test]: A notification MUST wake the poll of its resource, with the version
+    TEXT[!MUST,implementation,test]: as `c`, as a counter read does in section 4.2.
+    TEXT[!MUST,implementation]: A poll that a notification wakes MUST NOT start sooner than the poll
+    TEXT[!MUST,implementation]: interval after the start of the last poll of the resource.
+    TEXT[implementation]: A notification that arrives in that time joins the next poll.
+    TEXT[!MUST,implementation]: A server that listens MUST still poll each resource at a fallback
+    TEXT[!MUST,implementation]: interval of ten times the poll interval.
+    TEXT[implementation]: A listener needs a connection of its own, which a pooler that
+    TEXT[implementation]: multiplexes transactions cannot carry.
+    TEXT[implementation]: Postgres does not expire rows.
+    TEXT[!MUST,implementation,test]: Each server MUST delete the `events` rows of each resource whose
+    TEXT[!MUST,implementation,test]: `expires` is in the past.
+    TEXT[!MUST,implementation]: A server MUST run that delete at a random interval between half of the
+    TEXT[!MUST,implementation]: retention time and the retention time.
+    TEXT[!MUST,test]: A server MUST NOT depend on the time at which another server deletes
+    TEXT[!MUST,test]: the expired events.
 
   SECTION: [3.1. Issue](#3-1-issue)
     TEXT[!MUST,implementation]: Each resource MUST have its own counter item.
@@ -622,9 +658,12 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: counter item with the attribute `sealed`.
     TEXT[!MUST,implementation,test]: A write that fails because the store is sealed MUST return
     TEXT[!MUST,implementation,test]: `503 ServiceUnavailable`.
-    TEXT[!MUST]: To seal a resource that has no `counters` row, the tool MUST insert the
-    TEXT[!MUST]: row with `sealed` set.
+    TEXT[implementation,test]: The Postgres store seals with the flag `sealed` on the `counters` row of
+    TEXT[implementation,test]: each resource.
+    TEXT[!MUST,implementation]: To seal a resource that has no `counters` row, the tool MUST insert the
+    TEXT[!MUST,implementation]: row with `sealed` set.
     TEXT[implementation,test]: An unseal removes the attribute `sealed`.
+    TEXT[implementation]: On the Postgres store, an unseal clears `sealed`.
     TEXT[!MUST,implementation]: The tool MUST NOT unseal a source when the destination holds an object
     TEXT[!MUST,implementation]: that is not in the source, or that differs from its source object except
     TEXT[!MUST,implementation]: in resource version.
@@ -684,8 +723,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST]: version issued before the restore.
     TEXT[!MUST,implementation,test]: On the DynamoDB store, the restore tool MUST raise each counter item to
     TEXT[!MUST,implementation,test]: at least `epoch * 2^32`.
-    TEXT[!MUST]: On the Postgres store, the restore tool MUST raise `n` of each
-    TEXT[!MUST]: `counters` row to at least `epoch * 2^32`.
+    TEXT[!MUST,implementation]: On the Postgres store, the restore tool MUST raise `n` of each
+    TEXT[!MUST,implementation]: `counters` row to at least `epoch * 2^32`.
     TEXT[!MUST,implementation]: On the etcd store, the operator MUST restore with
     TEXT[!MUST,implementation]: `etcdutl snapshot restore --bump-revision` and `--mark-compacted`.
 

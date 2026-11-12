@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sstorage "k8s.io/apiserver/pkg/storage"
@@ -16,6 +17,7 @@ import (
 	"github.com/phoban01/solas/pkg/apiserver"
 	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
+	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // A resource that the move copies.
@@ -64,8 +66,10 @@ type Store struct {
 	// Formats holds the finalized format of the store, spec 11.1.
 	Formats k8sstorage.Interface
 	// Dynamo is set for a DynamoDB store, so the tool can seal it.
-	Dynamo  *dynamo.Config
-	destroy []factory.DestroyFunc
+	Dynamo *dynamo.Config
+	// Postgres is set for a Postgres store, so the tool can seal it.
+	Postgres *postgres.Config
+	destroy  []factory.DestroyFunc
 }
 
 // Open opens the store that a storage URL names. prefix is the storage
@@ -92,6 +96,23 @@ func Open(ctx context.Context, url, prefix string) (*Store, error) {
 		s.Dynamo = &cfg
 		open = func(r resource) (k8sstorage.Interface, error) {
 			return dynamo.New(cfg, apiserver.StorageCodec(), r.newFunc, r.newListFunc, prefix, r.prefix(), r.gr)
+		}
+	case storageurl.Postgres:
+		pool, err := pgxpool.New(ctx, sc.PostgresURL())
+		if err != nil {
+			return nil, err
+		}
+		s.destroy = append(s.destroy, pool.Close)
+		if sc.CreateTables {
+			if err := postgres.EnsureTables(ctx, pool, prefix); err != nil {
+				s.Close()
+				return nil, err
+			}
+		}
+		cfg := postgres.Config{Pool: pool}
+		s.Postgres = &cfg
+		open = func(r resource) (k8sstorage.Interface, error) {
+			return postgres.New(cfg, apiserver.StorageCodec(), r.newFunc, r.newListFunc, prefix, r.prefix(), r.gr)
 		}
 	case storageurl.Etcd:
 		open = func(r resource) (k8sstorage.Interface, error) {

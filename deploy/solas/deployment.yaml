@@ -35,7 +35,8 @@ spec:
           env:
             # The store and its credentials come from this Secret, so each
             # member cluster can point at the shared store. The AWS keys are
-            # optional: an etcd store needs none, and on AWS a role can
+            # optional: an etcd store needs none, a Postgres store has its
+            # own keys below, and on AWS a role can
             # give them.
             - name: STORAGE_URL
               valueFrom:
@@ -62,6 +63,13 @@ spec:
             - name: AWS_SESSION_TOKEN
               valueFrom:
                 secretKeyRef: {name: solas-storage, key: sessionToken, optional: true}
+            # A Postgres store reads its user and password from these keys.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: {name: solas-storage, key: pgUser, optional: true}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: {name: solas-storage, key: pgPassword, optional: true}
             - name: SWEEP_INTERVAL
               valueFrom:
                 configMapKeyRef: {name: solas-member, key: sweepInterval}

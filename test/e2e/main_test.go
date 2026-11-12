@@ -35,18 +35,21 @@ func mustAbs(p string) string {
 }
 
 func TestMain(m *testing.M) {
-	// SOLAS_STORE picks the shared store, dynamodb or etcd. join.sh reads
+	// SOLAS_STORE picks the shared store, dynamodb, etcd, or postgres. join.sh reads
 	// it, so both clusters use the same store.
 	switch s := os.Getenv("SOLAS_STORE"); s {
-	case "", "dynamodb", "etcd":
+	case "", "dynamodb", "etcd", "postgres":
 		fmt.Printf("e2e: store %s\n", map[bool]string{true: "dynamodb", false: s}[s == ""])
 	default:
-		fmt.Fprintf(os.Stderr, "e2e: SOLAS_STORE=%q is not dynamodb or etcd\n", s)
+		fmt.Fprintf(os.Stderr, "e2e: SOLAS_STORE=%q is not dynamodb, etcd, or postgres\n", s)
 		os.Exit(2)
 	}
 	testenv = env.New()
 	testenv.Setup(
 		script("scripts/images.sh"),
+		// A mesh of an earlier run can hold objects, which the move at the
+		// end of TestMesh refuses: the run starts from an empty mesh.
+		script("demo/k3d/mesh.sh", "down"),
 		script("demo/k3d/mesh.sh", "up"),
 		script("demo/k3d/join.sh", "a"),
 		script("demo/k3d/join.sh", "b"),

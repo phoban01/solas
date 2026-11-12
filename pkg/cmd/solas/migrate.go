@@ -2,7 +2,6 @@ package solas
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/phoban01/solas/pkg/migrate"
-	"github.com/phoban01/solas/pkg/storage/dynamo"
 )
 
 // migrateOptions holds the flags of solas migrate and solas unseal.
@@ -75,7 +73,7 @@ func (o *migrateOptions) migrate(ctx context.Context, out io.Writer) error {
 	if err := dst.Empty(ctx); err != nil {
 		return err
 	}
-	if dst.Dynamo == nil && !o.dryRun {
+	if !dst.CanSeal() && !o.dryRun {
 		// An etcd destination cannot raise its revision, spec 12.2; refuse
 		// it before the copy, while it is still empty.
 		if err := migrate.CheckRevision(ctx, src, dst); err != nil {
@@ -88,8 +86,8 @@ func (o *migrateOptions) migrate(ctx context.Context, out io.Writer) error {
 	switch {
 	case o.dryRun:
 		fmt.Fprintf(out, "dry run: would seal %s\n", src.URL)
-	case src.Dynamo != nil:
-		if err := dynamo.Seal(ctx, *src.Dynamo, src.Prefix, migrate.ResourcePrefixes()); err != nil {
+	case src.CanSeal():
+		if err := src.Seal(ctx); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "sealed %s: it now rejects every write\n", src.URL)
@@ -111,7 +109,7 @@ func (o *migrateOptions) migrate(ctx context.Context, out io.Writer) error {
 	if err := migrate.Verify(ctx, src, dst); err != nil {
 		return err
 	}
-	if dst.Dynamo != nil {
+	if dst.CanSeal() {
 		e, err := migrate.MoveEpoch(ctx, src, dst, o.clock.Now())
 		if err != nil {
 			return err
@@ -163,13 +161,13 @@ func newUnsealCommand() *cobra.Command {
 			}
 			defer src.Close()
 			defer dst.Close()
-			if src.Dynamo == nil {
-				return errors.New("--from: only a DynamoDB store can be sealed, so there is nothing to unseal")
+			if !src.CanSeal() {
+				return fmt.Errorf("--from: %w, so there is nothing to unseal", migrate.ErrCannotSeal)
 			}
 			if err := migrate.Untouched(ctx, src, dst); err != nil {
 				return fmt.Errorf("will not unseal: %w", err)
 			}
-			if err := dynamo.Unseal(ctx, *src.Dynamo, src.Prefix, migrate.ResourcePrefixes()); err != nil {
+			if err := src.Unseal(ctx); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "unsealed %s\n", src.URL)
