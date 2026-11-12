@@ -461,6 +461,16 @@ A device is bound when it has a `claimRef`.
 
 ### 5.3. Status updates
 
+A kind with a holder MUST carry `claimRef`, `fencingToken`, `offer`, and
+`preemption` in its status.
+The rules of this section, of section 6.6, and of section 14 MUST hold
+for every object of a kind with a holder.
+`Device` is the first kind with a holder.
+In those sections, a device is an object of any kind with a holder.
+The server MUST check the rules of a kind with a holder below the
+registry, on the stored objects, so that servers of two releases
+enforce them alike, section 11.
+
 The server MUST NOT accept an unconditional update of `Device` status.
 Each status update MUST carry the resource version that the client read.
 The server MUST reject a status update that changes `claimRef` from one

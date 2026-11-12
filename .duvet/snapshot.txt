@@ -274,6 +274,14 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: namespace, the claim name, and the claim UID.
 
   SECTION: [5.3. Status updates](#5-3-status-updates)
+    TEXT[!MUST,implementation]: A kind with a holder MUST carry `claimRef`, `fencingToken`, `offer`, and
+    TEXT[!MUST,implementation]: `preemption` in its status.
+    TEXT[!MUST,implementation,test]: The rules of this section, of section 6.6, and of section 14 MUST hold
+    TEXT[!MUST,implementation,test]: for every object of a kind with a holder.
+    TEXT[implementation]: `Device` is the first kind with a holder.
+    TEXT[!MUST,implementation]: The server MUST check the rules of a kind with a holder below the
+    TEXT[!MUST,implementation]: registry, on the stored objects, so that servers of two releases
+    TEXT[!MUST,implementation]: enforce them alike, section 11.
     TEXT[!MUST,implementation]: The server MUST NOT accept an unconditional update of `Device` status.
     TEXT[!MUST,implementation,test]: Each status update MUST carry the resource version that the client read.
     TEXT[!MUST,implementation,test]: The server MUST reject a status update that changes `claimRef` from one
