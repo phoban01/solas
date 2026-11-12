@@ -162,7 +162,7 @@ func TestCommitBatchConflictSplits(t *testing.T) {
 func TestCommitConcurrentWritersHaveNoGaps(t *testing.T) {
 	ctx := context.Background()
 	s1 := newTestStore(t)
-	s2, err := newStore(Config{Pool: s1.pool}, codec, newPod, newPodList, "/"+SchemaName(s1.schema), "/pods/", testGR)
+	s2, err := newStore(Config{Pool: s1.pool}, codec, newPod, newPodList, s1.prefix, "/pods/", testGR)
 	if err != nil {
 		t.Fatal(err)
 	}

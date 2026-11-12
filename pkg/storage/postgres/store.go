@@ -50,13 +50,16 @@ type store struct {
 	newFunc          func() runtime.Object
 	newListFunc      func() runtime.Object
 	resourcePrefix   string
-	// schema is the quoted schema of the storage prefix, spec 2.8.
+	// prefix is the storage prefix of the API server, and schema the quoted
+	// schema that it names, spec 2.8.
+	prefix string
 	schema string
 	// resource names the counter row, the objects, and the events of this
 	// resource in the schema.
 	resource      string
 	groupResource schema.GroupResource
 	now           func() time.Time
+	watchers      watchers
 	// batch collects the writes of this server to the resource, spec 2.3.
 	batch batcher
 	// q holds the statements of this store with the schema in place.
@@ -97,6 +100,7 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 		newFunc:        newFunc,
 		newListFunc:    newListFunc,
 		resourcePrefix: resourcePrefix,
+		prefix:         prefix,
 		schema:         pgx.Identifier{SchemaName(prefix)}.Sanitize(),
 		resource:       strings.TrimSuffix(resourcePrefix, "/"),
 		groupResource:  groupResource,
@@ -117,7 +121,7 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 
 // queries holds the SQL of a store, with the schema name in place.
 type queries struct {
-	commit, readCounter, initCounter, initEvent, readObject, readObjectRow, listObjects, listObjectsAfter, count string
+	commit, readCounter, initCounter, initEvent, readObject, readObjectRow, listObjects, listObjectsAfter, readEvents, count string
 }
 
 func newQueries(schema string) queries {
@@ -131,6 +135,7 @@ func newQueries(schema string) queries {
 		readObjectRow:    r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key = $2`),
 		listObjects:      r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key >= $2 AND starts_with(key, $3) ORDER BY key`),
 		listObjectsAfter: r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key > $2 AND starts_with(key, $3) ORDER BY key`),
+		readEvents:       r(`SELECT rv, type, key, value, prev FROM {S}.events WHERE resource = $1 AND rv BETWEEN $2 AND $3 ORDER BY rv`),
 		count:            r(`SELECT count(*) FROM {S}.objects WHERE resource = $1`),
 	}
 }
@@ -158,7 +163,15 @@ func (s *store) ReadinessCheck() error {
 
 // GetCurrentResourceVersion returns the counter of the resource.
 func (s *store) GetCurrentResourceVersion(ctx context.Context) (uint64, error) {
-	return s.readCounter(ctx)
+	c, err := s.readCounter(ctx)
+	if err != nil {
+		return 0, err
+	}
+	//= spec/solas.md#4-2-poll
+	//# When the server reads the counter for a consistent list, it SHOULD poll
+	//# with that value at once and then send a bookmark.
+	s.watchers.hint(c)
+	return c, nil
 }
 
 // EnableResourceSizeEstimation does nothing. Stats reports no object size.
@@ -169,5 +182,8 @@ func (s *store) EnableResourceSizeEstimation(storage.KeysFunc) error { return ni
 func (s *store) CompactRevision() int64 { return 0 }
 
 // RequestWatchProgress asks each open watch that set ProgressNotify to send
-// a bookmark with its current resource version. The watch comes with #311.
-func (s *store) RequestWatchProgress(ctx context.Context) error { return nil }
+// a bookmark with its current resource version.
+func (s *store) RequestWatchProgress(ctx context.Context) error {
+	s.watchers.requestProgress()
+	return nil
+}

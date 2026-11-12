@@ -169,15 +169,16 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[implementation,test]: So the list is a consistent snapshot at the counter value that it read.
     TEXT[!MUST,implementation,test]: The list MUST return that value as its resource version, with no second
     TEXT[!MUST,implementation,test]: read of the counter.
-    TEXT[!MUST]: A watch MUST poll the `events` rows of its resource as in section 4.2,
-    TEXT[!MUST]: with `c` from the `counters` row.
-    TEXT[!MUST]: A watch MUST keep the gap rule of section 4.3.
-    TEXT[!MUST]: Each server MUST delete the `events` rows of each resource whose
-    TEXT[!MUST]: `expires` is in the past.
-    TEXT[!MUST]: A server MUST run that delete at a random interval between half of the
-    TEXT[!MUST]: retention time and the retention time.
-    TEXT[!MUST]: A server MUST NOT depend on the time at which another server deletes
-    TEXT[!MUST]: the expired events.
+    TEXT[!MUST,implementation]: A watch MUST poll the `events` rows of its resource as in section 4.2,
+    TEXT[!MUST,implementation]: with `c` from the `counters` row.
+    TEXT[!MUST,test]: A watch MUST keep the gap rule of section 4.3.
+    TEXT[implementation]: Postgres does not expire rows.
+    TEXT[!MUST,implementation,test]: Each server MUST delete the `events` rows of each resource whose
+    TEXT[!MUST,implementation,test]: `expires` is in the past.
+    TEXT[!MUST,implementation]: A server MUST run that delete at a random interval between half of the
+    TEXT[!MUST,implementation]: retention time and the retention time.
+    TEXT[!MUST,test]: A server MUST NOT depend on the time at which another server deletes
+    TEXT[!MUST,test]: the expired events.
 
   SECTION: [3.1. Issue](#3-1-issue)
     TEXT[!MUST,implementation]: Each resource MUST have its own counter item.
