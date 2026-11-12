@@ -45,8 +45,11 @@ type watcher struct {
 	progress chan struct{}
 	// hint wakes the poller with a counter value that the store read for a
 	// consistent list, see watchers.hint. hinted holds the highest value.
-	hint   chan struct{}
-	hinted atomic.Uint64
+	hint chan struct{}
+	// notified wakes the poller with a notification of the commit, spec
+	// 2.8, which keeps the poll interval as the floor between two polls.
+	notified chan struct{}
+	hinted   atomic.Uint64
 }
 
 func (w *watcher) Stop()                          { w.cancel() }
@@ -79,6 +82,30 @@ func (ws *watchers) requestProgress() {
 	for w := range ws.set {
 		select {
 		case w.progress <- struct{}{}:
+		default:
+		}
+	}
+}
+
+//= spec/solas.md#2-8-postgres-store
+//# A notification MUST wake the poll of its resource, with the version
+//# as `c`, as a counter read does in section 4.2.
+
+// notify gives every watcher the version of a notification of the
+// commit, spec 2.8. The watcher polls with it, as with a hint, but no
+// sooner than the poll interval after its last poll.
+func (ws *watchers) notify(c uint64) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	for w := range ws.set {
+		for {
+			old := w.hinted.Load()
+			if old >= c || w.hinted.CompareAndSwap(old, c) {
+				break
+			}
+		}
+		select {
+		case w.notified <- struct{}{}:
 		default:
 		}
 	}
@@ -136,6 +163,7 @@ func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions)
 		progressNotify: opts.ProgressNotify,
 		progress:       make(chan struct{}, 1),
 		hint:           make(chan struct{}, 1),
+		notified:       make(chan struct{}, 1),
 	}
 	s.watchers.add(w)
 	utilflowcontrol.WatchInitialized(ctx)
@@ -194,7 +222,14 @@ func (w *watcher) run(start uint64, initialEvents, endBookmark bool) {
 		return
 	}
 
-	t := time.NewTicker(w.s.pollInterval)
+	//= spec/solas.md#2-8-postgres-store
+	//# A server that listens MUST still poll each resource at a fallback
+	//# interval of ten times the poll interval.
+	interval := w.s.pollInterval
+	if w.s.listener != nil {
+		interval *= 10
+	}
+	t := time.NewTicker(interval)
 	var progress <-chan time.Time
 	if w.progressNotify {
 		pt := time.NewTicker(w.s.progressInterval)
@@ -204,6 +239,7 @@ func (w *watcher) run(start uint64, initialEvents, endBookmark bool) {
 	defer t.Stop()
 	// The first poll runs at once, so a watch from a version delivers
 	// what came after it without a wait for the ticker.
+	lastPoll := time.Now()
 	last, ok := w.poll(last)
 	if !ok {
 		return
@@ -217,7 +253,17 @@ func (w *watcher) run(start uint64, initialEvents, endBookmark bool) {
 	// ticker, or a hint. The poll runs before the bookmark, so the bookmark
 	// carries a version at or above the counter at the time of the request,
 	// which is what a consistent list from the watch cache waits for.
+	var floor <-chan time.Time
 	for {
+		//= spec/solas.md#2-8-postgres-store
+		//# A poll that a notification wakes MUST NOT start sooner than the poll
+		//# interval after the start of the last poll of the resource.
+		//= spec/solas.md#2-8-postgres-store
+		//# A notification that arrives in that time joins the next poll.
+		//
+		// floor is armed by a notification that came too soon, and fires
+		// the poll when the interval has passed; a notification meanwhile
+		// raises hinted and joins it.
 		var hinted uint64
 		bookmark := false
 		select {
@@ -229,12 +275,24 @@ func (w *watcher) run(start uint64, initialEvents, endBookmark bool) {
 			//# a read of its own.
 			hinted = w.hinted.Load()
 			bookmark = w.progressNotify
+		case <-w.notified:
+			if wait := w.s.pollInterval - time.Since(lastPoll); wait > 0 {
+				if floor == nil {
+					floor = time.After(wait)
+				}
+				continue
+			}
+			hinted = w.hinted.Load()
+		case <-floor:
+			floor = nil
+			hinted = w.hinted.Load()
 		case <-w.progress:
 			bookmark = w.progressNotify
 		case <-progress:
 			bookmark = true
 		case <-t.C:
 		}
+		lastPoll = time.Now()
 		if hinted > 0 {
 			last, ok = w.pollAt(last, hinted)
 		} else {

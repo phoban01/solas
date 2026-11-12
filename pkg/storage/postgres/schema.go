@@ -95,6 +95,10 @@ CREATE INDEX IF NOT EXISTS events_expires ON {S}.events (expires);
 //# A lock held across a round trip to the server caps the resource at a
 //# few writes per second, whatever the number of writers.
 
+//= spec/solas.md#2-8-postgres-store
+//# The commit function SHOULD send a notification on the channel of the
+//# schema, with the resource and the last version of the transaction.
+
 // commitFunction is the write of spec 2.8 as one function, so the lock
 // on the counter row is held for the time of the function and not for a
 // round trip per statement. It takes the writes of a batch as arrays of
@@ -107,7 +111,8 @@ CREATE INDEX IF NOT EXISTS events_expires ON {S}.events (expires);
 // raises, which rolls the transaction back, the counter update with it:
 // the versions are never issued and the log has no hole. A sealed
 // counter returns no row from the update, and the function raises with
-// its own code.
+// its own code. At the end it notifies the channel of the schema with
+// the resource and the last version, which wakes the listeners.
 const commitFunction = `
 CREATE OR REPLACE FUNCTION {S}.solas_commit(
   res text, keys text[], actions text[], expects bigint[], vals bytea[], prevs bytea[], expires timestamptz
@@ -154,6 +159,7 @@ BEGIN
   IF bad <> '' THEN
     RAISE EXCEPTION 'object condition failed' USING ERRCODE = 'SLS02', DETAIL = bad;
   END IF;
+  PERFORM pg_notify({C}, res || ' ' || (base + k));
   RETURN base;
 END;
 $$ LANGUAGE plpgsql;
@@ -164,8 +170,9 @@ $$ LANGUAGE plpgsql;
 // start when the storage URL has create-tables=true, spec 2.6.
 func EnsureTables(ctx context.Context, pool *pgxpool.Pool, prefix string) error {
 	schema := pgx.Identifier{SchemaName(prefix)}.Sanitize()
+	channel := "'" + strings.ReplaceAll(SchemaName(prefix), "'", "''") + "'"
 	for _, stmt := range []string{ddl, commitFunction} {
-		if _, err := pool.Exec(ctx, strings.ReplaceAll(stmt, "{S}", schema)); err != nil {
+		if _, err := pool.Exec(ctx, strings.ReplaceAll(strings.ReplaceAll(stmt, "{S}", schema), "{C}", channel)); err != nil {
 			return fmt.Errorf("create the tables in %s: %w", schema, err)
 		}
 	}

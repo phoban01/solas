@@ -174,6 +174,18 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: A watch MUST poll the `events` rows of its resource as in section 4.2,
     TEXT[!MUST,implementation]: with `c` from the `counters` row.
     TEXT[!MUST,test]: A watch MUST keep the gap rule of section 4.3.
+    TEXT[!SHOULD,implementation,test]: The commit function SHOULD send a notification on the channel of the
+    TEXT[!SHOULD,implementation,test]: schema, with the resource and the last version of the transaction.
+    TEXT[!SHOULD,implementation]: A server SHOULD hold one connection that listens on that channel.
+    TEXT[!MUST,implementation,test]: A notification MUST wake the poll of its resource, with the version
+    TEXT[!MUST,implementation,test]: as `c`, as a counter read does in section 4.2.
+    TEXT[!MUST,implementation]: A poll that a notification wakes MUST NOT start sooner than the poll
+    TEXT[!MUST,implementation]: interval after the start of the last poll of the resource.
+    TEXT[implementation]: A notification that arrives in that time joins the next poll.
+    TEXT[!MUST,implementation]: A server that listens MUST still poll each resource at a fallback
+    TEXT[!MUST,implementation]: interval of ten times the poll interval.
+    TEXT[implementation]: A listener needs a connection of its own, which a pooler that
+    TEXT[implementation]: multiplexes transactions cannot carry.
     TEXT[implementation]: Postgres does not expire rows.
     TEXT[!MUST,implementation,test]: Each server MUST delete the `events` rows of each resource whose
     TEXT[!MUST,implementation,test]: `expires` is in the past.

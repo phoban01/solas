@@ -177,7 +177,10 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 		if err != nil {
 			return getter, err
 		}
-		getter.Postgres = postgres.Config{Pool: pool, EventRetention: o.EventRetention, PollInterval: o.PollInterval}
+		//= spec/solas.md#2-8-postgres-store
+		//# A server SHOULD hold one connection that listens on that channel.
+		getter.Postgres = postgres.Config{Pool: pool, EventRetention: o.EventRetention, PollInterval: o.PollInterval,
+			Listener: postgres.NewListener(ctx, sc.PostgresURL(), o.Prefix)}
 		return getter, nil
 	}
 	if sc.Kind == storageurl.Etcd {

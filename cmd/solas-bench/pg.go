@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	storageurl "github.com/phoban01/solas/pkg/storage"
@@ -142,6 +143,10 @@ func runPG(ctx context.Context, o options) error {
 	if o.mode == "poll" {
 		for i := 0; i < o.writers; i++ {
 			wg.Add(1)
+			if o.notify {
+				go notifyPoller(ctx, &wg, stop, pool, cfg.ConnConfig.ConnString(), &polls)
+				continue
+			}
 			var cursor int64
 			go loop(func() error {
 				next, err := pgPoll(ctx, pool, cursor)
@@ -160,6 +165,9 @@ func runPG(ctx context.Context, o options) error {
 	}
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
 	mode := "pg " + o.mode
+	if o.mode == "poll" && o.notify {
+		mode = "pg poll notify"
+	}
 	if o.mode == "commit" && o.spread {
 		mode = "pg commit spread"
 	}
@@ -216,6 +224,7 @@ BEGIN
   IF cnt <> 1 THEN RAISE EXCEPTION 'object % condition failed', b; END IF;
   IF counter THEN
     INSERT INTO bench_events (rv, id) VALUES (new_rv, a);
+    PERFORM pg_notify('bench', new_rv::text);
   END IF;
   RETURN new_rv;
 END;
@@ -253,4 +262,76 @@ func pgConnectTime(ctx context.Context, host string, port uint16) (time.Duration
 	d := time.Since(from)
 	_ = conn.Close()
 	return d, nil
+}
+
+// notifyPoller is a poller of --notify: it listens on the channel of
+// the bench schema, as a server does, spec 2.8, and reads the events
+// above its cursor when a notification arrives. The listener holds a
+// connection of its own; the poll goes through the pool.
+func notifyPoller(ctx context.Context, wg *sync.WaitGroup, stop <-chan struct{}, pool *pgxpool.Pool, url string, s *itemStats) {
+	defer wg.Done()
+	lctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-stop:
+		case <-lctx.Done():
+		}
+		cancel()
+	}()
+	conn, err := pgx.Connect(lctx, url)
+	if err != nil {
+		if s.errors.Add(1) <= 5 {
+			fmt.Fprintln(os.Stderr, "solas-bench: listener:", err)
+		}
+		return
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(lctx, "LISTEN bench"); err != nil {
+		if s.errors.Add(1) <= 5 {
+			fmt.Fprintln(os.Stderr, "solas-bench: listener:", err)
+		}
+		return
+	}
+	// wake holds one signal: the notifications that arrive during a poll
+	// join the next one, and a poll starts no sooner than the poll
+	// interval after the last, spec 2.8.
+	wake := make(chan struct{}, 1)
+	go func() {
+		defer close(wake)
+		for {
+			if _, err := conn.WaitForNotification(lctx); err != nil {
+				return
+			}
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	var cursor int64
+	var last time.Time
+	for range wake {
+		if wait := 200*time.Millisecond - time.Since(last); wait > 0 {
+			select {
+			case <-lctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+		last = time.Now()
+		from := time.Now()
+		next, err := pgPoll(ctx, pool, cursor)
+		if ctx.Err() != nil || lctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			if s.errors.Add(1) <= 5 {
+				fmt.Fprintln(os.Stderr, "solas-bench:", err)
+			}
+			continue
+		}
+		cursor = next
+		s.done(time.Since(from))
+	}
 }

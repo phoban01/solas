@@ -65,6 +65,9 @@ type options struct {
 	mode    string
 	writers int
 	spread  bool
+	// notify makes the pollers of the poll mode wait for a notification
+	// of the commit, each on a connection of its own, instead of a timer.
+	notify bool
 	// pollInterval is the watch poll interval of the DynamoDB store.
 	pollInterval time.Duration
 }
@@ -82,6 +85,7 @@ func main() {
 	fs.StringVar(&o.mode, "mode", "claim", "claim: simulated members bind and release; counter: writers add to one item; commit: writers put two items of their own in a transaction (ADR 0025, #290)")
 	fs.IntVar(&o.writers, "writers", 4, "goroutines of an item mode")
 	fs.BoolVar(&o.spread, "spread", false, "commit mode: give each writer a partition key of its own, instead of the one partition key of a resource")
+	fs.BoolVar(&o.notify, "notify", false, "poll mode on Postgres: each poller listens for the notification of the commit on a connection of its own, and polls on it instead of every 200 ms")
 	fs.DurationVar(&o.pollInterval, "poll-interval", dynamo.DefaultPollInterval, "how often a watch polls the event log of the DynamoDB store, spec 4.2")
 	fs.Int64Var(&o.maxUnits, "max-units", 10_000_000, "stop the run when its DynamoDB request units (calls counted by the tool) pass this; a cost guard on a real table")
 	fs.DurationVar(&o.memberLease, "member-lease", 0, "when set, each simulated member joins with a Member of this lease and renews it, so it can share a store with real clusters; 0 means no Member")

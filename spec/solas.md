@@ -291,6 +291,22 @@ read of the counter.
 A watch MUST poll the `events` rows of its resource as in section 4.2,
 with `c` from the `counters` row.
 A watch MUST keep the gap rule of section 4.3.
+The commit function SHOULD send a notification on the channel of the
+schema, with the resource and the last version of the transaction.
+A server SHOULD hold one connection that listens on that channel.
+A notification MUST wake the poll of its resource, with the version
+as `c`, as a counter read does in section 4.2.
+A poll that a notification wakes MUST NOT start sooner than the poll
+interval after the start of the last poll of the resource.
+A notification that arrives in that time joins the next poll.
+So a busy resource is polled once per interval, as without the
+notifications, and a quiet one is not polled at all.
+A server that listens MUST still poll each resource at a fallback
+interval of ten times the poll interval.
+So a lost notification, or a listener that is away, delays a
+delivery and loses nothing.
+A listener needs a connection of its own, which a pooler that
+multiplexes transactions cannot carry.
 Postgres does not expire rows.
 Each server MUST delete the `events` rows of each resource whose
 `expires` is in the past.

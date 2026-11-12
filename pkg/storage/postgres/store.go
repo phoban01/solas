@@ -35,6 +35,10 @@ type Config struct {
 	//# The retention time MUST be a setting of the API server.
 	EventRetention time.Duration
 	PollInterval   time.Duration
+	// Listener wakes the pollers on a notification of the commit, spec
+	// 2.8. Without it the stores poll at PollInterval; with it, at ten
+	// times that, as the fallback.
+	Listener *Listener
 	// ProgressInterval is how often a watch that asked for progress
 	// notifications gets a bookmark.
 	ProgressInterval time.Duration
@@ -60,6 +64,7 @@ type store struct {
 	groupResource schema.GroupResource
 	now           func() time.Time
 	watchers      watchers
+	listener      *Listener
 	// batch collects the writes of this server to the resource, spec 2.3.
 	batch batcher
 	// q holds the statements of this store with the schema in place.
@@ -116,6 +121,10 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 		s.pollInterval = DefaultPollInterval
 	}
 	s.q = newQueries(s.schema)
+	if cfg.Listener != nil {
+		s.listener = cfg.Listener
+		s.listener.register(s.resource, &s.watchers)
+	}
 	return s, nil
 }
 
