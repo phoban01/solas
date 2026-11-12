@@ -11,6 +11,7 @@ import (
 	genericapiserver "k8s.io/apiserver/pkg/server"
 
 	"github.com/phoban01/solas/pkg/apis/solas"
+	"github.com/phoban01/solas/pkg/holder"
 	"github.com/phoban01/solas/pkg/registry/solas/device"
 	"github.com/phoban01/solas/pkg/registry/solas/member"
 	"github.com/phoban01/solas/pkg/registry/solas/memberpolicy"
@@ -110,8 +111,9 @@ func (c CompletedConfig) New() (*Server, error) {
 	return &Server{GenericAPIServer: generic}, nil
 }
 
-// guards holds the storage guard of each resource, below the registry.
+// guards holds the storage guard of each resource, below the registry. A
+// kind with a holder registers holder.Guard, spec 5.3.
 // This file registers the kinds; the storage layer names none of them.
 var guards = map[schema.GroupResource]guard.Transition{
-	solas.Resource("devices"): device.Transition,
+	solas.Resource("devices"): holder.Guard,
 }

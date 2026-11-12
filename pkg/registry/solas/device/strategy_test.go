@@ -11,6 +11,7 @@ import (
 
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/format"
+	"github.com/phoban01/solas/pkg/holder"
 )
 
 var ref1 = &solas.ClaimRef{Member: "a", MemberUID: "mu", Namespace: "ns", Name: "c1", UID: "u1"}
@@ -181,12 +182,12 @@ func TestBindInANewEpoch(t *testing.T) {
 	if bound.Status.FencingToken != want {
 		t.Errorf("strategy: token %d, want %d", bound.Status.FencingToken, want)
 	}
-	if err := Transition(free, bound); err != nil {
+	if err := holder.Guard(free, bound); err != nil {
 		t.Errorf("guard rejected the epoch token: %v", err)
 	}
 	old := bound.DeepCopy()
 	old.Status.FencingToken = 8
-	if err := Transition(free, old); err == nil {
+	if err := holder.Guard(free, old); err == nil {
 		t.Error("guard accepted token 8 in epoch 3")
 	}
 }

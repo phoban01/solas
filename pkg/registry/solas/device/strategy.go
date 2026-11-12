@@ -18,7 +18,7 @@ import (
 
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/apis/solas/validation"
-	"github.com/phoban01/solas/pkg/format"
+	"github.com/phoban01/solas/pkg/holder"
 )
 
 // strategy handles creates, updates, and deletes of devices.
@@ -113,47 +113,8 @@ func (statusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Obj
 	d.Spec = o.Spec
 	// Labels and annotations belong to the main resource.
 	d.Labels, d.Annotations = o.Labels, o.Annotations
-	d.Status.FencingToken = nextToken(o, d)
+	d.SetHolderStatus(holder.Prepare(o.HolderStatus(), d.HolderStatus()))
 	d.Status.LastRelease = lastRelease(ctx, o, d)
-	//= spec/solas.md#10-7-bind-by-the-preemptor
-	//# The bind of the requesting claim MUST clear `status.preemption`.
-	if req := o.Status.Preemption; req != nil && o.Status.ClaimRef == nil && d.Status.ClaimRef != nil &&
-		validation.SameIdentity(d.Status.ClaimRef, &req.Claim) {
-		d.Status.Preemption = nil
-	}
-	//= spec/solas.md#14-2-bind-against-the-offer
-	//# The bind MUST be one status update that sets `claimRef` to the named
-	//# claim, sets `status.fencingToken` to the next token, spec 5.3 and 13.2,
-	//# and clears `status.offer`.
-
-	//= spec/solas.md#14-1-offer
-	//# When a status update clears `claimRef`, the server MUST clear
-	//# `status.offer`.
-
-	//= spec/solas.md#14-5-recovery-of-a-lost-claim
-	//# A recovery MUST clear `status.offer`, because the old identity made it.
-	if (o.Status.ClaimRef != nil && d.Status.ClaimRef == nil) || validation.IsTransferBind(d, o) || validation.IsRecovery(d, o) {
-		d.Status.Offer = nil
-	}
-}
-
-//= spec/solas.md#5-3-status-updates
-//# When a status update sets `claimRef` on a free device, the server MUST
-//# set `status.fencingToken` to the old value plus 1.
-
-//= spec/solas.md#5-3-status-updates
-//# The server MUST ignore the `status.fencingToken` that a client sends.
-
-//= spec/solas.md#5-3-status-updates
-//# In every other status update, the server MUST keep the old token.
-
-// nextToken returns the fencing token that the server stores for a status
-// update from old to d.
-func nextToken(old, d *solas.Device) int64 {
-	if (old.Status.ClaimRef == nil && d.Status.ClaimRef != nil) || validation.IsTransferBind(d, old) || validation.IsRecovery(d, old) {
-		return format.NextToken(old.Status.FencingToken, format.Epoch())
-	}
-	return old.Status.FencingToken
 }
 
 func (s statusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
@@ -251,7 +212,7 @@ func (s statusStrategy) WithMembers(members MemberLookup) statusStrategy {
 // The old UID was the UID of the Member with the name of the ref, and a
 // UID belongs to one object only, so only that Member can have it.
 func (s statusStrategy) validateRecovery(ctx context.Context, d, old *solas.Device) field.ErrorList {
-	if !validation.IsRecovery(d, old) {
+	if !holder.IsRecovery(old.HolderStatus(), d.HolderStatus()) {
 		return nil
 	}
 	path := field.NewPath("status", "claimRef", "memberUID")

@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/phoban01/solas/pkg/apis/solas"
+	"github.com/phoban01/solas/pkg/holder"
 )
 
 var (
@@ -180,10 +181,7 @@ func validatePreemption(d, old *solas.Device) field.ErrorList {
 }
 
 // SameIdentity reports whether two refs name the same claim.
-func SameIdentity(a, b *solas.ClaimRef) bool {
-	return a.Member == b.Member && a.MemberUID == b.MemberUID && a.Namespace == b.Namespace &&
-		a.Name == b.Name && a.UID == b.UID
-}
+func SameIdentity(a, b *solas.ClaimRef) bool { return holder.SameIdentity(a, b) }
 
 //= spec/solas.md#8-5-reclaim-policy
 //# A `Device` MAY set a reclaim policy in `spec.reclaimPolicy`: `Delete`,
@@ -249,11 +247,9 @@ func validateParameters(p *runtime.RawExtension, path *field.Path) field.ErrorLi
 }
 
 // IsTransferBind reports whether an update from old to d is a bind
-// against the offer of old: claimRef moves from the holder to exactly the
-// claim and member UID that the offer names, spec 14.2.
+// against the offer of old, spec 14.2.
 func IsTransferBind(d, old *solas.Device) bool {
-	return old.Status.ClaimRef != nil && old.Status.Offer != nil && d.Status.ClaimRef != nil &&
-		SameIdentity(d.Status.ClaimRef, old.Status.Offer)
+	return holder.IsTransferBind(old.HolderStatus(), d.HolderStatus())
 }
 
 // validateOffer checks the offer rules of spec 14.1.
@@ -284,11 +280,8 @@ func validateOffer(d, old *solas.Device) field.ErrorList {
 }
 
 // IsRecovery reports whether an update from old to d has the shape of a
-// recovery: claimRef keeps the member name and the claim, and moves to
-// another member UID, spec 14.5. The status strategy also checks that the
-// old member UID is gone.
+// recovery, spec 14.5. The status strategy also checks that the old
+// member UID is gone.
 func IsRecovery(d, old *solas.Device) bool {
-	o, n := old.Status.ClaimRef, d.Status.ClaimRef
-	return o != nil && n != nil && o.Member == n.Member && o.Namespace == n.Namespace &&
-		o.Name == n.Name && o.UID == n.UID && o.MemberUID != n.MemberUID
+	return holder.IsRecovery(old.HolderStatus(), d.HolderStatus())
 }

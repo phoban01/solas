@@ -15,16 +15,31 @@ keeps the core generic.
 | Types | `pkg/apis/solas/types.go`, `pkg/apis/solas/v1alpha1/types.go`, both `register.go` | The internal and the versioned struct, and the registration of both in the scheme |
 | Generated code | `pkg/apis/**/zz_generated.*.go`, `pkg/generated/**` | `devbox run codegen` writes conversion, deep copy, OpenAPI, clients, informers, and listers |
 | Validation | `pkg/apis/solas/validation/validation.go` | The rules of the kind's fields, in Go. Spec sentences cite them through Duvet |
-| Registry | `pkg/registry/solas/<kind>/storage.go` and its test | The REST store: `NewREST`, the strategy, the table columns. A kind with rules on its transitions also gives a `guard.Transition` |
+| Registry | `pkg/registry/solas/<kind>/storage.go` and its test | The REST store: `NewREST`, the strategy, the table columns. A kind with rules on its transitions also gives a `guard.Transition`; a kind with a holder registers `holder.Guard` |
 | Registration | `pkg/apiserver/apiserver.go` | One `NewREST` call, one entry in the versioned resources map, and, for a kind with a transition guard, one entry in `guards` |
 | RBAC | `deploy/solas/rbac.yaml` | Who may read and write it |
 | Example | `deploy/solas/config/<kind>.yaml` | A manifest an operator can start from |
 | Spec | `spec/solas.md` | The rules of the kind, with MUST only for what a test checks |
 
-A kind that must be held by one claim at a time, as a Device is, needs
-the holder rules too. Today those rules live in the Device registry
-(`strategy.go` and `guard.go`). Issue #264 makes them a primitive that a
-kind opts in to.
+A kind that must be held by one claim at a time, as a Device is, opts
+in to the holder primitive, `pkg/holder`, spec 5.3:
+
+1. Its status carries the fields of `solas.HolderStatus`: `claimRef`,
+   `fencingToken`, `offer`, and `preemption`.
+2. Its internal type implements `solas.Held`: `HolderStatus()` returns
+   those fields and `SetHolderStatus` stores them.
+3. Its entry in `guards` is `holder.Guard`, the transition check of
+   every kind with a holder.
+4. Its status strategy calls `holder.Prepare` in `PrepareForUpdate`,
+   which sets the token and clears the offer and the preemption
+   request as the rules say, and `holder.IsTransferBind` and
+   `holder.IsRecovery` where it needs the shape of an update.
+
+The rules of a holder then hold for the kind with no code of its own:
+the guard, the token, the offer, and the recovery live in `pkg/holder`
+and name no kind. Device is the first kind with a holder; the widget
+of `pkg/holder/kind_test.go` is the second, a test kind that goes
+through the real store and the guard with no change in `pkg/storage`.
 
 A kind that reads another kind, as the sweeper reads Members after
 Devices, gets no common snapshot of the two: the lists are two
