@@ -644,9 +644,12 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: counter item with the attribute `sealed`.
     TEXT[!MUST,implementation,test]: A write that fails because the store is sealed MUST return
     TEXT[!MUST,implementation,test]: `503 ServiceUnavailable`.
-    TEXT[!MUST]: To seal a resource that has no `counters` row, the tool MUST insert the
-    TEXT[!MUST]: row with `sealed` set.
+    TEXT[implementation,test]: The Postgres store seals with the flag `sealed` on the `counters` row of
+    TEXT[implementation,test]: each resource.
+    TEXT[!MUST,implementation]: To seal a resource that has no `counters` row, the tool MUST insert the
+    TEXT[!MUST,implementation]: row with `sealed` set.
     TEXT[implementation,test]: An unseal removes the attribute `sealed`.
+    TEXT[implementation]: On the Postgres store, an unseal clears `sealed`.
     TEXT[!MUST,implementation]: The tool MUST NOT unseal a source when the destination holds an object
     TEXT[!MUST,implementation]: that is not in the source, or that differs from its source object except
     TEXT[!MUST,implementation]: in resource version.
@@ -706,8 +709,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST]: version issued before the restore.
     TEXT[!MUST,implementation,test]: On the DynamoDB store, the restore tool MUST raise each counter item to
     TEXT[!MUST,implementation,test]: at least `epoch * 2^32`.
-    TEXT[!MUST]: On the Postgres store, the restore tool MUST raise `n` of each
-    TEXT[!MUST]: `counters` row to at least `epoch * 2^32`.
+    TEXT[!MUST,implementation]: On the Postgres store, the restore tool MUST raise `n` of each
+    TEXT[!MUST,implementation]: `counters` row to at least `epoch * 2^32`.
     TEXT[!MUST,implementation]: On the etcd store, the operator MUST restore with
     TEXT[!MUST,implementation]: `etcdutl snapshot restore --bump-revision` and `--mark-compacted`.
 

@@ -42,7 +42,7 @@ func newRestoreEpochCommand() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "moved %s from epoch %d to epoch %d\n", s.URL, cur, e)
-			if s.Dynamo == nil {
+			if !s.CanSeal() {
 				//= spec/solas.md#13-3-resource-versions
 				//# On the etcd store, the operator MUST restore with
 				//# `etcdutl snapshot restore --bump-revision` and `--mark-compacted`.

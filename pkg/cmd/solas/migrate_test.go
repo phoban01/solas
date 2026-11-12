@@ -19,9 +19,9 @@ import (
 
 	"github.com/phoban01/solas/internal/ddbtest"
 	"github.com/phoban01/solas/internal/etcdtest"
+	"github.com/phoban01/solas/internal/pgtest"
 	"github.com/phoban01/solas/pkg/apis/solas"
 	"github.com/phoban01/solas/pkg/migrate"
-	"github.com/phoban01/solas/pkg/storage/dynamo"
 )
 
 // run runs solas with args and returns its output.
@@ -73,7 +73,7 @@ func TestMigrate(t *testing.T) {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
 
-	sealed, err := dynamo.IsStoreSealed(ctx, *src.Dynamo, prefix, migrate.ResourcePrefixes())
+	sealed, err := src.Sealed(ctx)
 	if err != nil || !sealed {
 		t.Errorf("source sealed = %v, %v; want true", sealed, err)
 	}
@@ -123,13 +123,13 @@ func TestUnsealAnEmptyDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer src.Close()
-	if err := dynamo.Seal(context.Background(), *src.Dynamo, prefix, migrate.ResourcePrefixes()); err != nil {
+	if err := src.Seal(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := run(t, "unseal", "--from", from, "--to", to, "--storage-prefix", prefix); err != nil {
 		t.Fatalf("unseal: %v\n%s", err, out)
 	}
-	if sealed, err := dynamo.IsStoreSealed(context.Background(), *src.Dynamo, prefix, migrate.ResourcePrefixes()); err != nil || sealed {
+	if sealed, err := src.Sealed(context.Background()); err != nil || sealed {
 		t.Errorf("sealed after unseal = %v, %v", sealed, err)
 	}
 }
@@ -261,4 +261,103 @@ func TestMigrateMovesEpoch(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Error("a watch from a version of the source got nothing in 10 s, want 410 Gone")
 	}
+}
+
+//= spec/solas.md#12-1-seal
+//= type=test
+//# The Postgres store seals with the flag `sealed` on the `counters` row of
+//# each resource.
+
+// TestMigrateBetweenPostgresAndDynamoDB moves a mesh from Postgres to
+// DynamoDB and back. Each source is sealed, each destination moves to a
+// new epoch, and the first write on it gets a version above every
+// version of the source.
+func TestMigrateBetweenPostgresAndDynamoDB(t *testing.T) {
+	ctx := context.Background()
+	endpoint := os.Getenv(ddbtest.EndpointEnv)
+	if endpoint == "" {
+		t.Skipf("%s is not set; run the tests with devbox run test", ddbtest.EndpointEnv)
+	}
+	t.Setenv("AWS_ACCESS_KEY_ID", "local")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "local")
+	table := ddbtest.TableName(t)
+	ddbtest.DeleteTable(t, ddbtest.Client(t), table)
+	ddb := "dynamodb://" + table + "?create-table=true&endpoint=" + url.QueryEscape(endpoint)
+	pg := pgtest.URL(t)
+	prefix := pgtest.Prefix(t)
+
+	move := func(from, to string) {
+		t.Helper()
+		src, err := migrate.Open(ctx, from, prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer src.Close()
+		top, err := src.HighestVersion(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out, err := run(t, "migrate", "--from", from, "--to", to, "--storage-prefix", prefix); err != nil || !strings.Contains(out, "to epoch") {
+			t.Fatalf("migrate %s: %v\n%s", from, err, out)
+		}
+		if sealed, err := src.Sealed(ctx); err != nil || !sealed {
+			t.Errorf("source %s sealed = %v, %v; want true", from, sealed, err)
+		}
+		dst, err := migrate.Open(ctx, to, prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer dst.Close()
+		d := &solas.Device{}
+		if err := dst.Devices.Get(ctx, "/solas.dev/devices/d1", k8sstorage.GetOptions{}, d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Status.FencingToken != 4 || d.Status.ClaimRef == nil || d.Status.ClaimRef.Name != "job" {
+			t.Errorf("d1 on %s = token %d, ref %+v; want token 4, claim job", to, d.Status.FencingToken, d.Status.ClaimRef)
+		}
+		m := &solas.Member{ObjectMeta: metav1.ObjectMeta{Name: "m-" + strings.SplitN(to, ":", 2)[0]}}
+		out := &solas.Member{}
+		if err := dst.Members.Create(ctx, "/solas.dev/members/"+m.Name, m, out, 0); err != nil {
+			t.Fatal(err)
+		}
+		rv, _ := strconv.ParseUint(out.ResourceVersion, 10, 64)
+		if rv <= top {
+			t.Errorf("the first write on %s got version %d, want above %d, the highest of the source", to, rv, top)
+		}
+		// The member of this test must not go back with the next move.
+		if err := dst.Members.Delete(ctx, "/solas.dev/members/"+m.Name, &solas.Member{}, nil, k8sstorage.ValidateAllObjectFunc, nil, k8sstorage.DeleteOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	src, err := migrate.Open(ctx, pg, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &solas.Device{ObjectMeta: metav1.ObjectMeta{Name: "d1", UID: "uid-d1"}}
+	d.Status.ClaimRef = &solas.ClaimRef{Member: "a", MemberUID: "uid-a", Namespace: "work", Name: "job", UID: "uid-job"}
+	d.Status.FencingToken = 4
+	if err := src.Devices.Create(ctx, "/solas.dev/devices/d1", d, &solas.Device{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	src.Close()
+
+	move(pg, ddb)
+	// Back to Postgres: unseal it first, as the playbook says after a
+	// move away, and empty it, because a destination must hold nothing.
+	if out, err := run(t, "unseal", "--from", pg, "--to", ddb, "--storage-prefix", prefix); err == nil {
+		t.Fatalf("unseal with the destination in use passed:\n%s", out)
+	}
+	pgStore, err := migrate.Open(ctx, pg, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pgStore.Unseal(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := pgStore.Devices.Delete(ctx, "/solas.dev/devices/d1", &solas.Device{}, nil, k8sstorage.ValidateAllObjectFunc, nil, k8sstorage.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pgStore.Close()
+	move(ddb, pg)
 }

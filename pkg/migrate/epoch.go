@@ -10,7 +10,6 @@ import (
 	k8sstorage "k8s.io/apiserver/pkg/storage"
 
 	"github.com/phoban01/solas/pkg/apis/solas"
-	"github.com/phoban01/solas/pkg/storage/dynamo"
 )
 
 //= spec/solas.md#13-1-epoch
@@ -19,7 +18,7 @@ import (
 
 // SetEpoch moves the store to epoch e after a restore. It refuses an epoch
 // at or below the stored one; the write is conditional, so it only moves
-// up. On DynamoDB it also raises the counter items to e * 2^32, so the
+// up. On DynamoDB and Postgres it also raises the counters to e * 2^32, so the
 // resource versions go up too, spec 13.3.
 func (s *Store) SetEpoch(ctx context.Context, e int64) error {
 	up := func(in runtime.Object, _ k8sstorage.ResponseMeta) (runtime.Object, *uint64, error) {
@@ -44,10 +43,7 @@ func (s *Store) SetEpoch(ctx context.Context, e int64) error {
 	if err != nil {
 		return err
 	}
-	if s.Dynamo != nil {
-		return dynamo.RaiseCounters(ctx, *s.Dynamo, s.Prefix, ResourcePrefixes(), uint64(e)<<32)
-	}
-	return nil
+	return s.RaiseCounters(ctx, uint64(e)<<32)
 }
 
 // HighestVersion returns the highest resource version that the store
@@ -71,7 +67,7 @@ func (s *Store) HighestVersion(ctx context.Context) (uint64, error) {
 //# resource version that it issues above every resource version of the
 //# source, spec 13.3.
 
-// MoveEpoch moves a DynamoDB destination to a new epoch after the copy:
+// MoveEpoch moves a destination with counters to a new epoch after the copy:
 // above the epoch of either store, above the time in Unix seconds as spec
 // 13.1 asks, and high enough that every version the destination issues is
 // above every version of the source. It returns the epoch.

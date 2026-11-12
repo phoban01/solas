@@ -23,7 +23,7 @@ import (
 //# member reports a highest format at or above that value.
 
 func TestFinalize(t *testing.T) {
-	for name, openStore := range map[string]func(*testing.T) (*Store, string){"dynamodb": openDynamo, "etcd": openEtcd} {
+	for name, openStore := range map[string]func(*testing.T) (*Store, string){"dynamodb": openDynamo, "etcd": openEtcd, "postgres": openPostgres} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			s, _ := openStore(t)
