@@ -12,7 +12,7 @@ name=${1:?usage: join.sh <name>}
 cluster=e2e-$name
 kube=demo/k3d/.kube/$name
 mkdir -p demo/k3d/.kube
-# SOLAS_STORE picks the shared store: dynamodb, the default, or etcd.
+# SOLAS_STORE picks the shared store: dynamodb, the default, etcd, or postgres.
 store=${SOLAS_STORE:-dynamodb}
 url=$(demo/k3d/mesh.sh url "$store")
 say() { echo "[$name] $*"; }
