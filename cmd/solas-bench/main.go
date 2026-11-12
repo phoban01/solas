@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/jackc/pgx/v5/pgxpool"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
@@ -43,6 +44,7 @@ import (
 	memberregistry "github.com/phoban01/solas/pkg/registry/solas/member"
 	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
+	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // options are the flags of the tool.
@@ -152,7 +154,17 @@ func getter(ctx context.Context, o options) (apiserver.RESTOptionsGetter, *count
 		return g, nil, fmt.Errorf("--storage-url: %w", err)
 	}
 	if sc.Kind == storageurl.Postgres {
-		return g, nil, fmt.Errorf("--storage-url: the Postgres store is not built yet; --mode counter, commit, and poll run on it")
+		pool, err := pgxpool.New(ctx, sc.PostgresURL())
+		if err != nil {
+			return g, nil, err
+		}
+		if sc.CreateTables {
+			if err := postgres.EnsureTables(ctx, pool, o.prefix); err != nil {
+				return g, nil, err
+			}
+		}
+		g.Postgres = postgres.Config{Pool: pool, EventRetention: postgres.DefaultEventRetention, PollInterval: o.pollInterval}
+		return g, nil, nil
 	}
 	if sc.Kind == storageurl.Etcd {
 		g.EtcdServers = sc.Endpoints

@@ -56,10 +56,20 @@ users:
 //# Until the server has read the finalized format and the epoch of the
 //# store, it MUST reject every write with `503 ServiceUnavailable`.
 
-// TestReadyWithoutStore starts solas on a DynamoDB endpoint that refuses
-// every connection. The server reports ready and serves discovery, and a
-// write fails with 503 because the finalized format is not read.
+// TestReadyWithoutStore starts solas on a store endpoint that refuses
+// every connection, on DynamoDB and on Postgres. The server reports
+// ready and serves discovery, and a write fails with 503 because the
+// finalized format is not read.
 func TestReadyWithoutStore(t *testing.T) {
+	for name, url := range map[string]string{
+		"dynamodb": "dynamodb://solas?create-table=true&endpoint=http://127.0.0.1:%d",
+		"postgres": "postgres://127.0.0.1:%d?sslmode=disable&create-tables=true",
+	} {
+		t.Run(name, func(t *testing.T) { testReadyWithoutStore(t, url) })
+	}
+}
+
+func testReadyWithoutStore(t *testing.T, url string) {
 	closed := closedPort(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "test")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
@@ -78,7 +88,7 @@ func TestReadyWithoutStore(t *testing.T) {
 	})
 
 	o := NewOptions()
-	o.Server.StorageURL = fmt.Sprintf("dynamodb://solas?create-table=true&endpoint=http://127.0.0.1:%d", closed)
+	o.Server.StorageURL = fmt.Sprintf(url, closed)
 	o.Controller.ClusterID = "a"
 	o.Controller.LeaderElection = false
 	ro := o.Server.RecommendedOptions
@@ -93,6 +103,8 @@ func TestReadyWithoutStore(t *testing.T) {
 	}
 	ro.SecureServing.Listener = ln
 	ro.SecureServing.BindPort = ln.Addr().(*net.TCPAddr).Port
+	// Run applies the options, so the port is read before Run starts.
+	port := ro.SecureServing.BindPort
 	if err := o.Server.Registry.Set(); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +121,7 @@ func TestReadyWithoutStore(t *testing.T) {
 		}
 	})
 
-	base := fmt.Sprintf("https://127.0.0.1:%d", ro.SecureServing.BindPort)
+	base := fmt.Sprintf("https://127.0.0.1:%d", port)
 	hc := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 	get := func(path string) (int, string) {
 		resp, err := hc.Get(base + path)

@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -24,6 +26,7 @@ import (
 	generatedopenapi "github.com/phoban01/solas/pkg/generated/openapi"
 	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
+	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // Options holds the flags of the solas API server.
@@ -40,6 +43,11 @@ type Options struct {
 	// Prefix separates the data of different API servers in one table.
 	// All member clusters must use the same prefix to share state.
 	Prefix string
+	// pool is the connection pool of a Postgres store, shared by the
+	// server and EnsureStore, made on first use.
+	pool     *pgxpool.Pool
+	poolOnce sync.Once
+	poolErr  error
 }
 
 // RequestTimeout bounds each request. A request that waits for a store
@@ -94,8 +102,8 @@ func NewCommand(ctx context.Context, o *Options) *cobra.Command {
 			"etcd://<host:port>[,<host:port>...] picks an etcd cluster; "+
 			"postgres://<host:port>?database=<name>&sslmode=<mode>&create-tables=true picks a Postgres database, with PGUSER and PGPASSWORD from the environment.")
 	flags.StringVar(&o.StorageVersion, "storage-version", o.StorageVersion, "Version of the solas.dev group that objects are stored in. Every member must be able to read it.")
-	flags.DurationVar(&o.EventRetention, "event-retention", o.EventRetention, "How long events stay in the event log of the DynamoDB store.")
-	flags.DurationVar(&o.PollInterval, "poll-interval", o.PollInterval, "How often a watch polls the event log of the DynamoDB store.")
+	flags.DurationVar(&o.EventRetention, "event-retention", o.EventRetention, "How long events stay in the event log of the DynamoDB and Postgres stores.")
+	flags.DurationVar(&o.PollInterval, "poll-interval", o.PollInterval, "How often a watch polls the event log of the DynamoDB and Postgres stores.")
 	flags.StringVar(&o.Prefix, "storage-prefix", o.Prefix, "Key prefix in the store. All member clusters must use the same prefix.")
 	_, _ = o.Registry.ComponentGlobalsOrRegister(basecompatibility.DefaultKubeComponent,
 		basecompatibility.NewEffectiveVersionFromString(baseversion.DefaultKubeBinaryVersion, "", ""),
@@ -165,7 +173,12 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 		return getter, fmt.Errorf("--storage-url: %w", err)
 	}
 	if sc.Kind == storageurl.Postgres {
-		return getter, fmt.Errorf("--storage-url: the Postgres store is not built yet, ADR 0026")
+		pool, err := o.postgresPool(ctx, sc)
+		if err != nil {
+			return getter, err
+		}
+		getter.Postgres = postgres.Config{Pool: pool, EventRetention: o.EventRetention, PollInterval: o.PollInterval}
+		return getter, nil
 	}
 	if sc.Kind == storageurl.Etcd {
 		getter.EtcdServers = sc.Endpoints
@@ -204,6 +217,9 @@ func (o *Options) EnsureStore(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("--storage-url: %w", err)
 	}
+	if sc.Kind == storageurl.Postgres {
+		return o.ensurePostgres(ctx, sc)
+	}
 	if sc.Kind != storageurl.DynamoDB || !sc.CreateTable {
 		return nil
 	}
@@ -236,4 +252,42 @@ func (o *Options) Run(ctx context.Context) error {
 		}
 	}()
 	return server.GenericAPIServer.PrepareRun().RunWithContext(ctx)
+}
+
+// postgresPool returns the pool of the Postgres store. The pool opens
+// no connection until the first query, so the server starts when the
+// store does not answer, spec 16.1.
+func (o *Options) postgresPool(ctx context.Context, sc storageurl.Config) (*pgxpool.Pool, error) {
+	o.poolOnce.Do(func() {
+		o.pool, o.poolErr = pgxpool.New(ctx, sc.PostgresURL())
+	})
+	return o.pool, o.poolErr
+}
+
+//= spec/solas.md#2-6-storage-url
+//# The query key `create-tables` with the value `true` makes the server
+//# create the tables at start when they do not exist.
+
+// ensurePostgres creates the tables when the storage URL asks for it,
+// as soon as the store answers, and then runs the event expiry of spec
+// 2.8 until ctx ends.
+func (o *Options) ensurePostgres(ctx context.Context, sc storageurl.Config) error {
+	pool, err := o.postgresPool(ctx, sc)
+	if err != nil {
+		return err
+	}
+	if sc.CreateTables {
+		err := wait.PollUntilContextCancel(ctx, storeRetry, true, func(ctx context.Context) (bool, error) {
+			if err := postgres.EnsureTables(ctx, pool, o.Prefix); err != nil {
+				klog.InfoS("waiting for the store", "host", sc.Host, "err", err.Error())
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	go postgres.RunExpiry(ctx, pool, o.Prefix, o.EventRetention)
+	return nil
 }

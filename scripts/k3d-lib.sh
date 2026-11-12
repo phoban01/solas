@@ -96,7 +96,8 @@ solas_install() {
   kubectl -n solas-system create secret generic solas-storage --dry-run=client -o yaml \
     --from-literal=url="$url" \
     --from-literal=accessKeyID="${AWS_ACCESS_KEY_ID:-local}" --from-literal=secretAccessKey="${AWS_SECRET_ACCESS_KEY:-local}" \
-    --from-literal=sessionToken="${AWS_SESSION_TOKEN:-}" | kubectl apply -f - >/dev/null
+    --from-literal=sessionToken="${AWS_SESSION_TOKEN:-}" \
+    --from-literal=pgUser="${PGUSER:-solas}" --from-literal=pgPassword="${PGPASSWORD:-solas}" | kubectl apply -f - >/dev/null
   kubectl -n solas-system create configmap solas-member --dry-run=client -o yaml \
     --from-literal=clusterID="$id" --from-literal=leaseDuration="$lease" \
     --from-literal=leaseMargin="$margin" --from-literal=sweepInterval="$sweep" \

@@ -100,6 +100,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[implementation]: create the table at start when it does not exist.
     TEXT[!MUST,implementation,test]: A URL with the scheme `etcd` MUST select the etcd store.
     TEXT[!MUST,implementation,test]: A URL with the scheme `postgres` MUST select the Postgres store.
+    TEXT[implementation]: The query key `create-tables` with the value `true` makes the server
+    TEXT[implementation]: create the tables at start when they do not exist.
     TEXT[!MUST,implementation]: The user and the password of a `postgres` URL MUST come from the
     TEXT[!MUST,implementation]: environment variables `PGUSER` and `PGPASSWORD`.
     TEXT[!MUST,implementation,test]: The server MUST reject a storage URL with another scheme.

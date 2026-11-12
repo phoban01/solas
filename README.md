@@ -31,10 +31,12 @@ must use the same store.
 | DynamoDB | `dynamodb://<table>?region=<region>` |
 | dynamodb-local | `dynamodb://solas?create-table=true&endpoint=http://<host>:8000` |
 | etcd | `etcd://<host:port>[,<host:port>...]` |
+| Postgres | `postgres://<host>:<port>?database=<name>&sslmode=<mode>&create-tables=true`, with `PGUSER` and `PGPASSWORD` in the environment |
 
 The Deployment in `deploy/solas` reads the URL from the key `url` of the
 Secret `solas-storage`. `deploy/solas/config/storage.yaml` is an example.
 On DynamoDB, the AWS credentials come from the environment or from the
+same Secret; on Postgres, the keys `pgUser` and `pgPassword` of the
 same Secret. [docs/store-contract.md](docs/store-contract.md) shows what
 the protocol needs from a store, and how each store keeps it.
 [docs/scale.md](docs/scale.md), "Fleet size", has the members, binds per

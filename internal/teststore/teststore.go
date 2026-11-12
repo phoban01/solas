@@ -1,16 +1,22 @@
 // Package teststore runs a test once on each store: the DynamoDB store on
-// dynamodb-local, and the etcd store, as scripts/test.sh starts them.
+// dynamodb-local, the etcd store, and the Postgres store, as
+// scripts/test.sh starts them.
 package teststore
 
 import (
 	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
 
 	"github.com/phoban01/solas/internal/ddbtest"
 	"github.com/phoban01/solas/internal/etcdtest"
+	"github.com/phoban01/solas/internal/pgtest"
 	"github.com/phoban01/solas/pkg/apiserver"
+	storageurl "github.com/phoban01/solas/pkg/storage"
 	"github.com/phoban01/solas/pkg/storage/dynamo"
+	"github.com/phoban01/solas/pkg/storage/postgres"
 )
 
 // Store names a store and builds an empty store of that kind.
@@ -21,7 +27,7 @@ type Store struct {
 
 // All returns every store.
 func All() []Store {
-	return []Store{{Name: "dynamodb", New: Dynamo}, {Name: "etcd", New: Etcd}}
+	return []Store{{Name: "dynamodb", New: Dynamo}, {Name: "etcd", New: Etcd}, {Name: "postgres", New: Postgres}}
 }
 
 // Run runs f as a subtest on each store. A subtest skips when its store
@@ -58,5 +64,29 @@ func Etcd(t testing.TB) apiserver.RESTOptionsGetter {
 		Codec:           apiserver.StorageCodec(),
 		EncodeVersioner: apiserver.StorageVersioner(),
 		Prefix:          etcdtest.Prefix(t),
+	}
+}
+
+// Postgres returns a getter on a new, empty schema in the test Postgres.
+func Postgres(t testing.TB) apiserver.RESTOptionsGetter {
+	t.Helper()
+	sc, err := storageurl.Parse(pgtest.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(context.Background(), sc.PostgresURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	prefix := pgtest.Prefix(t)
+	if err := postgres.EnsureTables(context.Background(), pool, prefix); err != nil {
+		t.Fatal(err)
+	}
+	return apiserver.RESTOptionsGetter{
+		Postgres:        postgres.Config{Pool: pool, PollInterval: 20 * time.Millisecond},
+		Codec:           apiserver.StorageCodec(),
+		EncodeVersioner: apiserver.StorageVersioner(),
+		Prefix:          prefix,
 	}
 }
