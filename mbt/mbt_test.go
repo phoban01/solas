@@ -10,7 +10,7 @@ import (
 )
 
 // newDriver returns a driver on an empty store. MBT_STORE picks the store:
-// dynamodb, the default, or etcd.
+// dynamodb, the default, etcd, or postgres.
 func newDriver(t *testing.T) *Driver {
 	t.Helper()
 	var g apiserver.RESTOptionsGetter
@@ -19,8 +19,10 @@ func newDriver(t *testing.T) *Driver {
 		g = teststore.Dynamo(t)
 	case "etcd":
 		g = teststore.Etcd(t)
+	case "postgres":
+		g = teststore.Postgres(t)
 	default:
-		t.Fatalf("MBT_STORE=%q is not dynamodb or etcd", s)
+		t.Fatalf("MBT_STORE=%q is not dynamodb, etcd, or postgres", s)
 	}
 	d, stop, err := NewDriver(g)
 	if err != nil {

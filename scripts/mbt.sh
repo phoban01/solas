@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Model-based tests: generate traces of quint/solas.qnt with a fixed seed,
-# then replay each one against the real REST stores, on dynamodb-local
-# and on etcd. The traces are generated once, and the two stores start
+# then replay each one against the real REST stores, on dynamodb-local,
+# on etcd, and on Postgres. The traces are generated once, and the stores start
 # once, for the replay on each store.
 # The traces of step include faults, transfers, and recoveries. The
 # traces of calmStep have none, so they reach preemption. The traces of
@@ -11,7 +11,7 @@
 #   MBT_STEPS  steps per trace of step (default 30)
 #   MBT_CALM_STEPS  steps per trace of calmStep (default 80)
 #   MBT_SEED   seed of the trace generator (default 0x5eed)
-#   MBT_STORES the stores to replay on (default "dynamodb etcd")
+#   MBT_STORES the stores to replay on (default "dynamodb etcd postgres")
 #   MBT_STORE  one store to replay on, instead of MBT_STORES
 #
 # The script skips when the model, the code, this script, and the
@@ -27,7 +27,7 @@ source scripts/local-stores.sh
 
 count=${MBT_COUNT:-40}
 seed=${MBT_SEED:-0x5eed}
-stores=${MBT_STORES:-${MBT_STORE:-dynamodb etcd}}
+stores=${MBT_STORES:-${MBT_STORE:-dynamodb etcd postgres}}
 
 key=$(stamp_key "$(quint --version) count=$count seed=$seed steps=${MBT_STEPS:-30} calm=${MBT_CALM_STEPS:-80} stores=$stores" \
   quint/solas.qnt mbt pkg cmd internal go.mod go.sum scripts/mbt.sh scripts/test.sh scripts/local-stores.sh)
