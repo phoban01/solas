@@ -42,6 +42,13 @@ the protocol needs from a store, and how each store keeps it.
 [docs/scale.md](docs/scale.md), "Fleet size", has the members, binds per
 minute, and devices one store supports, from the measured rows.
 
+Which store for which fleet, from those rows: a DynamoDB table carries
+a mesh of up to a few hundred members at the default lease and about
+two thousand binds a minute; a Postgres database on Aurora Serverless
+v2 carries a few thousand members and about twenty thousand binds a
+minute, with nothing to run, [docs/aurora.md](docs/aurora.md); etcd
+gives the most at a short round trip, for a mesh that runs its own.
+
 To move a running mesh to another store, see
 [docs/migrate.md](docs/migrate.md): `solas migrate` seals the old store,
 copies, and verifies, and each cluster then gets the new URL.

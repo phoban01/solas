@@ -139,6 +139,6 @@ filler, no marketing adjectives, no emoji.
   `docs/adding-a-kind.md` what a new kind touches, and what it never does;
 - `docs/confidence.md` the trust ladder; `docs/sim-gate.md` the simulator;
   `docs/benchmarks.md` every measured number;
-  `docs/scale.md` the scale results;
+  `docs/scale.md` the scale results; `docs/aurora.md` the store on Aurora;
   `docs/mbt.md` the model-based tests
 - `.github/workflows/verify.yml` and `sim-gate.yml` the CI gates

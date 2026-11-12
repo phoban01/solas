@@ -190,7 +190,8 @@ writes each, on a cluster at its maximum of 8 ACUs. The row lock
 measured alone commits 553 to 602 times per second ("Postgres"), so
 the resource has about twice that left, with more members or a larger
 cluster; the 128 member row at 16 ACUs is bound by the VM that runs
-the 128 servers. A bind pays about five round trips, so a single
+the 128 servers; [aurora.md](aurora.md) has the capacity per row. A
+bind pays about five round trips, so a single
 member binds at the pace of the round trip, 100 ms at 20 ms, and the
 rate grows with the members: 42 at 2, 148 at 8, 404 at 32. The
 Member resource takes the same transactions per second, so the
