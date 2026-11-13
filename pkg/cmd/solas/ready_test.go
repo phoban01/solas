@@ -69,7 +69,11 @@ func TestReadyWithoutStore(t *testing.T) {
 	}
 }
 
-func testReadyWithoutStore(t *testing.T, url string) {
+// startWithoutStore starts solas on a store endpoint that refuses every
+// connection, waits until it reports ready, and returns its base URL,
+// an HTTP client for it, and a get function.
+func startWithoutStore(t *testing.T, url string) (string, *http.Client, func(string) (int, string)) {
+	t.Helper()
 	closed := closedPort(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "test")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
@@ -149,6 +153,11 @@ func testReadyWithoutStore(t *testing.T, url string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	return base, hc, get
+}
+
+func testReadyWithoutStore(t *testing.T, url string) {
+	base, hc, get := startWithoutStore(t, url)
 	if code, body := get("/apis/solas.dev/v1alpha1"); code != http.StatusOK {
 		t.Errorf("discovery of solas.dev/v1alpha1 = %d with the store down, want 200: %s", code, body)
 	}

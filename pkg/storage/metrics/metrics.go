@@ -46,3 +46,13 @@ var (
 func init() {
 	legacyregistry.MustRegister(Conflicts, WatchLag)
 }
+
+// Prepare creates the series of a resource at zero, so /metrics lists
+// them before the first conflict or delivery, and a rate over them has a
+// start. Each store calls it once for its resource.
+func Prepare(resource string) {
+	for _, cause := range []string{CauseCounter, CauseObject, CauseList} {
+		Conflicts.WithLabelValues(resource, cause)
+	}
+	WatchLag.WithLabelValues(resource)
+}

@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/storage"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 // Default settings.
@@ -121,6 +123,7 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 		s.pollInterval = DefaultPollInterval
 	}
 	s.q = newQueries(s.schema)
+	storemetrics.Prepare(s.groupResource.String())
 	if cfg.Listener != nil {
 		s.listener = cfg.Listener
 		s.listener.register(s.resource, &s.watchers)
