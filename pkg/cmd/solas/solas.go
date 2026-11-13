@@ -112,7 +112,7 @@ func (o *Options) runStore(ctx context.Context) error {
 	log := ctrl.Log.WithName("store")
 	var store *migrate.Store
 	err := wait.PollUntilContextCancel(ctx, storeRetry, true, func(ctx context.Context) (bool, error) {
-		s, err := migrate.Open(ctx, o.Server.StorageURL, o.Server.Prefix)
+		s, err := openStore(ctx, o.Server.StorageURL, o.Server.Prefix)
 		if err != nil {
 			log.Info("waiting for the store", "err", err.Error())
 			return false, nil
@@ -239,5 +239,33 @@ func cleanUsage(ctx context.Context, s *migrate.Store, member string) error {
 		if len(removed) > 0 {
 			log.Info("removed stale usage entries", "member", member, "devices", removed)
 		}
+	}
+}
+
+// openStore opens the store as migrate.Open does, but returns when ctx
+// ends. The etcd3 storage waits until it reaches etcd and does not take
+// a context, so an open of an etcd store that does not answer can run
+// for a minute. The open goes on in the background, and its store is
+// closed when it arrives.
+func openStore(ctx context.Context, url, prefix string) (*migrate.Store, error) {
+	type result struct {
+		s   *migrate.Store
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		s, err := migrate.Open(ctx, url, prefix)
+		done <- result{s, err}
+	}()
+	select {
+	case r := <-done:
+		return r.s, r.err
+	case <-ctx.Done():
+		go func() {
+			if r := <-done; r.s != nil {
+				r.s.Close()
+			}
+		}()
+		return nil, ctx.Err()
 	}
 }

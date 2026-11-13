@@ -155,7 +155,12 @@ func (g RESTOptionsGetter) etcdOptions(resource schema.GroupResource) generic.RE
 func (g RESTOptionsGetter) RawStorage(config *storagebackend.ConfigForResource, resourcePrefix string,
 	newFunc, newListFunc func() runtime.Object) (storage.Interface, factory.DestroyFunc, error) {
 	if len(g.EtcdServers) > 0 {
-		return generic.NewRawStorage(config, newFunc, newListFunc, resourcePrefix)
+		// The etcd3 storage waits at start until it reaches etcd; build it
+		// in the background, so the server starts without etcd, spec 16.1.
+		s, destroy := newLazy(func() (storage.Interface, factory.DestroyFunc, error) {
+			return generic.NewRawStorage(config, newFunc, newListFunc, resourcePrefix)
+		})
+		return s, destroy, nil
 	}
 	if g.Postgres.Pool != nil {
 		s, err := postgres.New(g.Postgres, config.Codec, newFunc, newListFunc, config.Prefix, resourcePrefix, config.GroupResource)

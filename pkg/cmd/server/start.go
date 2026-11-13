@@ -212,7 +212,7 @@ func (o *Options) restOptionsGetter(ctx context.Context) (apiserver.RESTOptionsG
 const storeRetry = 2 * time.Second
 
 //= spec/solas.md#16-1-the-server
-//# The server MUST start when the DynamoDB store does not answer.
+//# The server MUST start when the store does not answer.
 
 //= spec/solas.md#2-6-storage-url
 //# The query key `create-table` with the value `true` makes the server
