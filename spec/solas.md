@@ -744,6 +744,8 @@ If the member renewed after the observation, the delete fails with
 `409 Conflict`.
 So a renew and a delete of the same `Member` cannot both succeed.
 The sweeper MUST NOT delete its own `Member`.
+The sweeper MUST log each `Member` that it deletes, with its name and
+UID.
 
 ### 8.3. Clear stale claim references
 
@@ -762,6 +764,10 @@ device list.
 If the clear fails with `409 Conflict`, the sweeper MUST skip the device
 until its next run.
 The sweeper MUST run at least once every `D`.
+The sweeper MUST log each `claimRef` that it clears, with the device, the
+member UID, and the fencing token.
+The log lines of the sweeper are the audit of reclaim: each names what
+the sweeper changed and whose it was.
 
 ### 8.4. Safety
 
