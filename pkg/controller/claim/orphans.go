@@ -145,6 +145,7 @@ func (r *Reconciler) MarkLost(ctx context.Context, uid types.UID) error {
 			continue
 		}
 		setPhase(c, claimsv1alpha1.ClaimLost)
+		r.event(c, nil, true, ReasonLost, "lost device %s with fencing token %d: the member joined again with a new UID", c.Status.DeviceName, c.Status.FencingToken)
 		if err := r.Client.Status().Update(ctx, c); err != nil {
 			return err
 		}

@@ -66,6 +66,7 @@ func Run(ctx context.Context, cfg *rest.Config, o *Options) error {
 	members.MarkLost = claims.MarkLost
 	members.BeforeRenew = claims.HandlePreemptions
 	claims.Clock = clk
+	claims.Events = mgr.GetEventRecorder("solas-controller")
 	if err := claims.SetupWithManager(mgr); err != nil {
 		return err
 	}

@@ -71,6 +71,7 @@ func (r *Reconciler) transferStep(ctx context.Context, claim *claimsv1alpha1.Dev
 	//# the device.
 	if own == nil {
 		log.FromContext(ctx).Info("device moved to another claim", "device", claim.Status.DeviceName)
+		r.event(claim, nil, false, ReasonTransferred, "handed device %s, fencing token %d, to the claim it offered it to", claim.Status.DeviceName, claim.Status.FencingToken)
 		if _, ok := claim.Annotations[AnnotationTransferTo]; ok {
 			delete(claim.Annotations, AnnotationTransferTo)
 			return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Update(ctx, claim))
@@ -135,6 +136,7 @@ func (r *Reconciler) transferStep(ctx context.Context, claim *claimsv1alpha1.Dev
 		return reconcile.Result{Requeue: true}, ignoreConflict(ignoreInvalid(err))
 	}
 	log.FromContext(ctx).Info("offered", "device", d.Name, "to", claimKey(target))
+	r.event(claim, d, false, ReasonOffered, "offered device %s, fencing token %d, to claim %s", d.Name, d.Status.FencingToken, claimKey(target))
 	return reconcile.Result{RequeueAfter: r.Resync}, nil
 }
 

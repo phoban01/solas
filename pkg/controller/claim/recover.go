@@ -44,6 +44,7 @@ func (r *Reconciler) recover(ctx context.Context, claim *claimsv1alpha1.DeviceCl
 			return reconcile.Result{}, err
 		}
 		log.FromContext(ctx).Info("recovered", "device", d.Name, "token", d.Status.FencingToken)
+		r.event(claim, d, false, ReasonRecovered, "recovered device %s under the new member UID with fencing token %d", d.Name, d.Status.FencingToken)
 		//= spec/solas.md#14-5-recovery-of-a-lost-claim
 		//# After a recovery, the controller MUST set the claim back to `Bound`.
 		return r.setBound(ctx, claim, d, st.UID)

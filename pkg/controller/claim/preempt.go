@@ -101,6 +101,7 @@ func (r *Reconciler) requestPreemption(ctx context.Context, claim *claimsv1alpha
 		return reconcile.Result{}, err
 	}
 	ctrlmetrics.PreemptionRequests.Inc()
+	r.event(claim, d, false, ReasonPreemptionRequested, "asked the holder %s/%s of device %s, fencing token %d, to release it", d.Status.ClaimRef.Namespace, d.Status.ClaimRef.Name, d.Name, d.Status.FencingToken)
 	log.FromContext(ctx).Info("requested preemption", "device", d.Name,
 		"holder", d.Status.ClaimRef.Namespace+"/"+d.Status.ClaimRef.Name, "priority", prio)
 	claim.Status.PreemptionTarget = d.Name
@@ -157,6 +158,7 @@ func (r *Reconciler) preemptionStep(ctx context.Context, claim *claimsv1alpha1.D
 			if err := r.clear(ctx, own); err != nil {
 				return true, err
 			}
+			r.event(claim, own, true, ReasonPreempted, "released device %s with fencing token %d to a claim of higher priority", own.Name, own.Status.FencingToken)
 		}
 		//= spec/solas.md#10-6-release-by-the-holder
 		//# The controller MUST then set the claim back to `Pending`.
