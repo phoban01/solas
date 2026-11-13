@@ -58,6 +58,14 @@ copy() {
       k "$kube" -n solas-system scale deploy/solas --replicas=0 >/dev/null
     done
   fi
+  if [ "$to" = etcd ]; then
+    # An etcd destination cannot raise its revision, so the tool refuses
+    # one below the source, spec 12.2. The operator raises it first; in
+    # the demo a helper writes to the empty etcd until it is above.
+    docker run --rm --network solas-mesh \
+      -e AWS_ACCESS_KEY_ID=local -e AWS_SECRET_ACCESS_KEY=local -e PGUSER=solas -e PGPASSWORD=solas \
+      solas-demo:dev raise-etcd --from "$from_url" --to "$to_url"
+  fi
   # The tool runs on the mesh network, so it reaches both stores. The
   # demo lease D is 10 seconds; an etcd source is watched that long.
   docker run --rm --network solas-mesh \

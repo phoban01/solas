@@ -1,0 +1,20 @@
+# The actuator takes calls only through the gatekeeper, spec 17 and ADR
+# 0017. The demo actuator runs outside the clusters, on the mesh network,
+# so the rule is an egress policy in the namespace of the workloads: they
+# reach every address except the actuator's, and so they reach it only
+# through the gatekeeper Service in solas-system, whose Pod no policy
+# here selects. join.sh fills in ACTUATOR_IP. deploy/gatekeeper has the
+# ingress policy for an actuator that runs as a Pod in a cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: no-direct-actuator
+  namespace: work
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [ACTUATOR_IP/32]

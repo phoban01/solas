@@ -51,6 +51,36 @@ One gatekeeper sits in front of each actuator, as a proxy of its API.
 Each other actuator needs its own section, with the operations that
 change a device, before its gatekeeper is designed.
 
+## What the gatekeeper does not protect
+
+The gatekeeper checks the calls that go through it. Three paths do not:
+
+- **A path around it.** A workload, or anything else in the network,
+  that calls the actuator straight skips the check. A network policy
+  closes this path: the actuator admits calls from the gatekeeper's
+  address only. `deploy/gatekeeper/actuator-policy.yaml` is the
+  ingress policy for an actuator that runs as a Pod;
+  `demo/k3d/manifests/actuator-policy.yaml` is the egress policy the
+  demo uses, because its actuator runs outside the clusters. The mesh
+  e2e test sends one call from a pod of a member cluster straight to
+  the actuator and expects it to fail, and the same pod reaches the
+  gatekeeper (#294).
+  An egress policy in the namespaces of the workloads is the weaker form:
+  the policy controller of k3s adds a new pod to its rules a moment
+  after the pod starts, so the first calls of a new pod pass, and a
+  namespace with no policy is open. The ingress policy, or a firewall,
+  on the actuator side has neither gap.
+- **An actuator with credentials of its own.** An operator, a script,
+  or another system that holds the actuator's credentials changes a
+  device without a token. The policy does not stop a caller that the
+  actuator trusts. The rule is that only the gatekeeper holds the
+  actuator's credentials; any other caller needs a gatekeeper of its
+  own.
+- **A device that an agent on it changes.** An agent on the machine
+  acts on the device with no call to the actuator. Fencing protects
+  such a device only when the agent checks tokens itself, spec 6.6, as
+  the demo device does.
+
 ## Consequences
 
 - Until a gatekeeper exists for an actuator, spec 6.6 and the README say

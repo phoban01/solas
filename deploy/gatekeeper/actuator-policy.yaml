@@ -1,0 +1,22 @@
+# The actuator takes calls only through the gatekeeper, spec 17 and ADR
+# 0017. For an actuator that runs as a Pod in the cluster, this policy
+# admits ingress from the gatekeeper's Pods only. Set the namespace and
+# the labels of the actuator. An actuator outside the cluster needs the
+# same rule in its own network: a security group or a firewall that
+# admits the gatekeeper's address only, or an egress policy in each
+# namespace of workloads, as demo/k3d/manifests/actuator-policy.yaml has.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: actuator-only-from-gatekeeper
+  namespace: ACTUATOR_NAMESPACE
+spec:
+  podSelector:
+    matchLabels: {app: ACTUATOR_APP}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: solas-system}
+          podSelector:
+            matchLabels: {app: solas-gatekeeper}
