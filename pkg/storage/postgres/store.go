@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/storage"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 // Default settings.
@@ -121,6 +123,7 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 		s.pollInterval = DefaultPollInterval
 	}
 	s.q = newQueries(s.schema)
+	storemetrics.Prepare(s.groupResource.String())
 	if cfg.Listener != nil {
 		s.listener = cfg.Listener
 		s.listener.register(s.resource, &s.watchers)
@@ -144,7 +147,7 @@ func newQueries(schema string) queries {
 		readObjectRow:    r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key = $2`),
 		listObjects:      r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key >= $2 AND starts_with(key, $3) ORDER BY key`),
 		listObjectsAfter: r(`SELECT key, rv, value FROM {S}.objects WHERE resource = $1 AND key > $2 AND starts_with(key, $3) ORDER BY key`),
-		readEvents:       r(`SELECT rv, type, key, value, prev FROM {S}.events WHERE resource = $1 AND rv BETWEEN $2 AND $3 ORDER BY rv`),
+		readEvents:       r(`SELECT rv, type, key, value, prev, expires FROM {S}.events WHERE resource = $1 AND rv BETWEEN $2 AND $3 ORDER BY rv`),
 		count:            r(`SELECT count(*) FROM {S}.objects WHERE resource = $1`),
 	}
 }

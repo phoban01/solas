@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/storage"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 // API is the part of the DynamoDB client that the store uses.
@@ -122,6 +124,7 @@ func newStore(cfg Config, codec runtime.Codec, newFunc, newListFunc func() runti
 	if s.pollInterval == 0 {
 		s.pollInterval = DefaultPollInterval
 	}
+	storemetrics.Prepare(s.groupResource.String())
 	return s, nil
 }
 

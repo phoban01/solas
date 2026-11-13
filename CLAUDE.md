@@ -143,5 +143,6 @@ filler, no marketing adjectives, no emoji.
 - `docs/confidence.md` the trust ladder; `docs/sim-gate.md` the simulator;
   `docs/benchmarks.md` every measured number;
   `docs/scale.md` the scale results; `docs/aurora.md` the store on Aurora;
+  `docs/observability.md` every metric, Event, and log line;
   `docs/mbt.md` the model-based tests
 - `.github/workflows/verify.yml` and `sim-gate.yml` the CI gates

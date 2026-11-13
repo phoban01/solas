@@ -98,3 +98,14 @@ var (
 func init() {
 	legacyregistry.MustRegister(RenewSeconds, RenewErrors, StoreSealed, MembersObserved, MembersSwept, ReferencesCleared, Binds, PreemptionRequests)
 }
+
+// The fixed label values start at zero, so /metrics lists each series
+// before the first event.
+func init() {
+	for _, cause := range []string{"sealed", "unavailable", "other"} {
+		RenewErrors.WithLabelValues(cause)
+	}
+	for _, kind := range []string{ClearedClaimRef, ClearedPreemption, ClearedOffer} {
+		ReferencesCleared.WithLabelValues(kind)
+	}
+}
