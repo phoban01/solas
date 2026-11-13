@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/clock"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,6 +35,9 @@ type MemberState interface {
 
 // Reconciler binds and releases the DeviceClaims of this cluster.
 type Reconciler struct {
+	// Events records an Event on a claim for each bind, release,
+	// preemption, transfer, recovery, and loss. Nil records nothing.
+	Events events.EventRecorder
 	// Client reads claims from the cache and writes claims and devices.
 	Client client.Client
 	// Reader reads with no cache, for consistent lists of devices.
@@ -234,6 +238,7 @@ func (r *Reconciler) bind(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		return reconcile.Result{}, err
 	}
 	log.FromContext(ctx).Info("bound", "device", d.Name, "token", d.Status.FencingToken)
+	r.event(claim, d, false, ReasonBound, "bound device %s with fencing token %d", d.Name, d.Status.FencingToken)
 	//= spec/solas.md#6-3-bind
 	//# The controller MUST NOT set a claim to `Bound` from a bind that carried
 	//# an older member UID.
@@ -294,6 +299,7 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		//# When the controller finds that its member UID changed, it MUST set each
 		//# claim with the old `status.memberUID` to `Lost`.
 		setPhase(claim, claimsv1alpha1.ClaimLost)
+		r.event(claim, nil, true, ReasonLost, "lost device %s with fencing token %d: the member joined again with a new UID", claim.Status.DeviceName, claim.Status.FencingToken)
 		return reconcile.Result{}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 	}
 
@@ -314,6 +320,7 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		setPhase(claim, claimsv1alpha1.ClaimSuspended)
 		claim.Status.PreemptionSeenAt = nil
 		log.FromContext(ctx).Info("suspended", "device", claim.Status.DeviceName, "live", st.Live, "draining", st.Draining)
+		r.event(claim, nil, true, ReasonSuspended, "suspended on device %s with fencing token %d: the member is not live or is draining", claim.Status.DeviceName, claim.Status.FencingToken)
 		return reconcile.Result{Requeue: true}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 	}
 
@@ -403,6 +410,7 @@ func (r *Reconciler) held(ctx context.Context, claim *claimsv1alpha1.DeviceClaim
 		if st.Live && !st.Draining && own != nil && own.Status.ClaimRef.MemberUID == st.UID {
 			claim.Status.Phase = claimsv1alpha1.ClaimBound
 			log.FromContext(ctx).Info("bound again", "device", own.Name, "token", own.Status.FencingToken)
+			r.event(claim, own, false, ReasonResumed, "bound again on device %s with fencing token %d", own.Name, own.Status.FencingToken)
 			return reconcile.Result{RequeueAfter: r.Resync}, ignoreConflict(r.Client.Status().Update(ctx, claim))
 		}
 	}
@@ -433,6 +441,7 @@ func (r *Reconciler) release(ctx context.Context, claim *claimsv1alpha1.DeviceCl
 			if err := r.clear(ctx, &devices[i]); err != nil {
 				return reconcile.Result{}, err
 			}
+			r.event(claim, &devices[i], false, ReasonReleased, "released device %s with fencing token %d", devices[i].Name, devices[i].Status.FencingToken)
 		}
 	}
 	if err := r.withdraw(ctx, claim, devices); err != nil {

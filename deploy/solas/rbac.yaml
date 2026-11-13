@@ -47,7 +47,7 @@ rules:
   - apiGroups: ["solas.dev"]
     resources: ["memberpolicies"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
+  - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
 ---
@@ -103,7 +103,7 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
+  - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
 ---
