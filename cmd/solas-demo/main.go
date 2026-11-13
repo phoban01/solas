@@ -26,7 +26,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: solas-demo device|actuator|workload [flags]")
+		fmt.Fprintln(os.Stderr, "usage: solas-demo device|actuator|workload|probe|raise-etcd [flags]")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -37,6 +37,10 @@ func main() {
 		err = runDevice(ctx, os.Args[2:])
 	case "actuator":
 		err = runActuator(ctx, os.Args[2:])
+	case "raise-etcd":
+		err = runRaiseEtcd(ctx, os.Args[2:])
+	case "probe":
+		err = runProbe(ctx, os.Args[2:])
 	case "workload":
 		err = runWorkload(ctx, os.Args[2:])
 	default:

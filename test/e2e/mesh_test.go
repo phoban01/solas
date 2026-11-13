@@ -310,6 +310,24 @@ func TestMesh(t *testing.T) {
 			eventually(t, 60*time.Second, "the winner deploys through the gatekeeper", func(context.Context) bool {
 				return deployed(actuatorURL, winner, 1)
 			})
+			// The actuator takes calls only through the gatekeeper, ADR 0017:
+			// a pod in the namespace of the workloads cannot reach it, and the
+			// same pod reaches the gatekeeper, so the policy and not the
+			// network blocks the direct call. The probe waits 5 seconds first:
+			// the policy controller of k3s adds a new pod to its rules a moment
+			// after the pod starts.
+			probe := func(name, url string) string {
+				out, _ := runQuiet("kubectl", "--kubeconfig", kubeconfig(winner), "-n", "work", "run", name, "--rm", "-i",
+					"--restart=Never", "--image=solas-demo:dev", "--image-pull-policy=IfNotPresent", "--",
+					"probe", "--url="+url, "--timeout=5s", "--delay=5s")
+				return out
+			}
+			if out := probe("direct", actuatorURL+"/log"); !strings.Contains(out, "UNREACHABLE") {
+				t.Errorf("a pod of %s reached the actuator straight, not through the gatekeeper:\n%s", winner, out)
+			}
+			if out := probe("through", "http://solas-gatekeeper.solas-system.svc:9443/log"); !strings.Contains(out, "REACHED") {
+				t.Errorf("a pod of %s did not reach the gatekeeper:\n%s", winner, out)
+			}
 			oldUID = memberUID(ctx, clients[winner], winner)
 			node := "k3d-e2e-" + winner + "-server-0"
 			run(t, "", "docker", "pause", node)

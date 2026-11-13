@@ -42,3 +42,10 @@ say "install the gatekeeper in front of the demo actuator"
 # current token.
 sed "s|ACTUATOR_URL|$(demo/k3d/mesh.sh actuator)|" deploy/gatekeeper/gatekeeper.yaml | kubectl apply -f - >/dev/null
 kubectl -n solas-system rollout status deploy/solas-gatekeeper --timeout=120s >/dev/null
+
+say "workloads reach the actuator only through the gatekeeper"
+# The actuator is outside the cluster, so an egress policy in the
+# namespace of the workloads keeps them from its address, ADR 0017.
+actuator_ip=$(demo/k3d/mesh.sh actuator | sed -e 's|^http://||' -e 's|:.*||')
+kubectl create namespace work --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+sed "s|ACTUATOR_IP|$actuator_ip|" demo/k3d/manifests/actuator-policy.yaml | kubectl apply -f - >/dev/null
