@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 type action int
@@ -167,6 +169,7 @@ func (s *store) commitBatch(batch []*pending) {
 			rest := batch[:0:0]
 			for i, p := range batch {
 				if conflicts[i] {
+					storemetrics.Conflicts.WithLabelValues(s.groupResource.String(), storemetrics.CauseObject).Inc()
 					p.done <- result{err: errObjectConflict}
 				} else {
 					rest = append(rest, p)

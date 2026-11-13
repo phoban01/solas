@@ -20,6 +20,8 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 // event is one item of the event log.
@@ -29,6 +31,9 @@ type event struct {
 	sk    string
 	value []byte
 	prev  []byte
+	// written is the time of the write, from the expiry of the event and
+	// the retention, for the lag of the delivery.
+	written time.Time
 }
 
 // watcher delivers the events of one watch. It polls the event log, as
@@ -365,6 +370,9 @@ func (w *watcher) pollAt(last, c uint64) (uint64, bool) {
 			w.sendError(err)
 			return 0, false
 		}
+		if ev != nil {
+			storemetrics.WatchLag.WithLabelValues(w.s.groupResource.String()).Observe(time.Since(e.written).Seconds())
+		}
 		if ev != nil && !w.send(*ev) {
 			return 0, false
 		}
@@ -412,12 +420,14 @@ func (s *store) readEvents(ctx context.Context, first, last uint64) ([]event, er
 			if _, err := fmt.Sscanf(strAttr(item, attrSK), "%d", &rv); err != nil {
 				return nil, fmt.Errorf("event sort key %q: %w", strAttr(item, attrSK), err)
 			}
+			expires, _ := numAttr(item, attrExpires)
 			events = append(events, event{
-				rv:    rv,
-				typ:   watch.EventType(strAttr(item, attrType)),
-				sk:    strAttr(item, attrKey),
-				value: binAttr(item, attrValue),
-				prev:  binAttr(item, attrPrev),
+				written: time.Unix(int64(expires), 0).Add(-s.retention),
+				rv:      rv,
+				typ:     watch.EventType(strAttr(item, attrType)),
+				sk:      strAttr(item, attrKey),
+				value:   binAttr(item, attrValue),
+				prev:    binAttr(item, attrPrev),
 			})
 		}
 		if out.LastEvaluatedKey == nil {

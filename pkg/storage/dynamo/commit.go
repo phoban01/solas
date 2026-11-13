@@ -19,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/watch"
+
+	storemetrics "github.com/phoban01/solas/pkg/storage/metrics"
 )
 
 type action int
@@ -235,6 +237,7 @@ func (s *store) commitBatch(batch []*pending) {
 			//# A wrong value fails only the counter condition, so the retry below reads
 			//# the counter, and the writes keep their order.
 			s.batch.missed()
+			storemetrics.Conflicts.WithLabelValues(s.groupResource.String(), storemetrics.CauseCounter).Inc()
 			continue
 		}
 		if len(conflicts) > 0 {
@@ -243,6 +246,7 @@ func (s *store) commitBatch(batch []*pending) {
 			rest := batch[:0:0]
 			for i, p := range batch {
 				if conflicts[i] {
+					storemetrics.Conflicts.WithLabelValues(s.groupResource.String(), storemetrics.CauseObject).Inc()
 					p.done <- result{err: errObjectConflict}
 				} else {
 					rest = append(rest, p)
@@ -252,6 +256,7 @@ func (s *store) commitBatch(batch []*pending) {
 			continue
 		}
 		if retry && attempt < maxCounterRetries {
+			storemetrics.Conflicts.WithLabelValues(s.groupResource.String(), storemetrics.CauseCounter).Inc()
 			//= spec/solas.md#2-3-writes
 			//# If the transaction fails only on the counter condition, the server MUST
 			//# read the counter again and retry the same writes.
