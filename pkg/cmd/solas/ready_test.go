@@ -49,7 +49,7 @@ users:
 
 //= spec/solas.md#16-1-the-server
 //= type=test
-//# The server MUST start when the DynamoDB store does not answer.
+//# The server MUST start when the store does not answer.
 
 //= spec/solas.md#16-1-the-server
 //= type=test
@@ -64,6 +64,7 @@ func TestReadyWithoutStore(t *testing.T) {
 	for name, url := range map[string]string{
 		"dynamodb": "dynamodb://solas?create-table=true&endpoint=http://127.0.0.1:%d",
 		"postgres": "postgres://127.0.0.1:%d?sslmode=disable&create-tables=true",
+		"etcd":     "etcd://127.0.0.1:%d",
 	} {
 		t.Run(name, func(t *testing.T) { testReadyWithoutStore(t, url) })
 	}

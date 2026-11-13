@@ -804,7 +804,7 @@ SPECIFICATION: [Solas specification](spec/solas.md)
 
   SECTION: [16.1. The server](#16-1-the-server)
     TEXT[!MUST,implementation,test]: The readiness of the server MUST NOT depend on the store.
-    TEXT[!MUST,implementation,test]: The server MUST start when the DynamoDB store does not answer.
+    TEXT[!MUST,implementation,test]: The server MUST start when the store does not answer.
     TEXT[!MUST,implementation,test]: Until the server has read the finalized format and the epoch of the
     TEXT[!MUST,implementation,test]: store, it MUST reject every write with `503 ServiceUnavailable`.
     TEXT[!MUST,implementation,test]: A write that fails because the server cannot reach the store MUST fail

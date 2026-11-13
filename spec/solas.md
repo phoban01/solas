@@ -1265,7 +1265,7 @@ This section collects them and adds the rules for the server.
 ### 16.1. The server
 
 The readiness of the server MUST NOT depend on the store.
-The server MUST start when the DynamoDB store does not answer.
+The server MUST start when the store does not answer.
 The kube-apiserver of the host cluster reaches the solas resources
 through the APIService, and the APIService is available only while a
 solas Pod is ready.
@@ -1276,10 +1276,10 @@ So the server starts without the store, serves discovery, and reports
 ready.
 Only the requests that need the store fail.
 
-The etcd store is the etcd3 storage of `k8s.io/apiserver`, which waits
-at start until it reaches etcd, as the kube-apiserver does.
-A server on the etcd store needs etcd at start.
-An outage after the start does not stop it.
+The etcd3 storage of `k8s.io/apiserver` waits at start until it reaches
+etcd, and fails after 20 seconds.
+So the server builds the etcd store in the background, and tries again
+until etcd answers.
 
 Until the server has read the finalized format and the epoch of the
 store, it MUST reject every write with `503 ServiceUnavailable`.

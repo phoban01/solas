@@ -51,10 +51,12 @@ the APIService unavailable.
 - When the store is finalized above the release, the server exits right
   after its start instead of refusing to start. Writes were rejected
   with a `503` until then, so no write in a wrong format lands.
-- The etcd store is the etcd3 storage of `k8s.io/apiserver`, which waits
-  at start until it reaches etcd, as the kube-apiserver does. A server
-  on the etcd store still needs etcd at start. An outage after the start
-  does not stop it.
+- Every store starts without its backend. The etcd3 storage of
+  `k8s.io/apiserver` waits at start until it reaches etcd and fails
+  after 20 seconds, so the server builds each etcd store in the
+  background and tries again every 2 seconds (#232,
+  `pkg/apiserver/lazy.go`). A call before the build waits for it up to
+  10 seconds, then fails with `503`.
 
 ## Rejected alternatives
 
@@ -62,10 +64,6 @@ the APIService unavailable.
   unavailable in an outage, which is the failure this ADR removes. A
   store outage shows in the `503` errors and the `Suspended` claims
   instead.
-- A lazy etcd client that connects on first use. It needs a wrapper
-  around the etcd3 storage factory of `k8s.io/apiserver`. The DynamoDB
-  store is the main store, and the kube-apiserver has the same limit, so
-  this waits for a need.
 - Internal errors (`500`) for a store that does not answer. Clients do
   not retry a `500` in the same way, and the error does not say that the
   store is the cause.
