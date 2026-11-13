@@ -137,7 +137,11 @@ func (s *Sweeper) expire(ctx context.Context) error {
 		err := s.Client.Delete(ctx, m, client.Preconditions{UID: &ob.uid, ResourceVersion: &ob.rv})
 		switch {
 		case err == nil:
-			log.FromContext(ctx).Info("deleted an expired member", "member", m.Name, "uid", m.UID)
+			//= spec/solas.md#8-2-delete-an-expired-member
+			//# The sweeper MUST log each `Member` that it deletes, with its name and
+			//# UID.
+			log.FromContext(ctx).Info("swept an expired member", "event", "member-deleted", "member", m.Name, "memberUID", m.UID,
+				"resourceVersion", ob.rv, "lease", d.String())
 			ctrlmetrics.MembersSwept.Inc()
 			delete(s.seen, m.Name)
 		case apierrors.IsConflict(err), apierrors.IsNotFound(err):
@@ -192,6 +196,15 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 				cleared.Status.Offer = nil
 			}
 			if err := s.Client.Status().Update(ctx, cleared); err == nil {
+				logger := log.FromContext(ctx)
+				if staleReq {
+					logger.Info("cleared a preemption request of a gone member", "event", "preemption-cleared", "device", d.Name,
+						"member", d.Status.Preemption.Claim.Member, "memberUID", d.Status.Preemption.Claim.MemberUID, "fencingToken", d.Status.FencingToken)
+				}
+				if staleOffer {
+					logger.Info("cleared an offer to a gone member", "event", "offer-cleared", "device", d.Name,
+						"member", d.Status.Offer.Member, "memberUID", d.Status.Offer.MemberUID, "fencingToken", d.Status.FencingToken)
+				}
 				if staleReq {
 					ctrlmetrics.ReferencesCleared.WithLabelValues(ctrlmetrics.ClearedPreemption).Inc()
 				}
@@ -222,7 +235,11 @@ func (s *Sweeper) clearStale(ctx context.Context) error {
 		err := s.Client.Status().Update(ctx, cleared)
 		switch {
 		case err == nil:
-			log.FromContext(ctx).Info("freed a device of a gone member", "device", d.Name, "member", ref.Member)
+			//= spec/solas.md#8-3-clear-stale-claim-references
+			//# The sweeper MUST log each `claimRef` that it clears, with the device, the
+			//# member UID, and the fencing token.
+			log.FromContext(ctx).Info("freed a device of a gone member", "event", "claimref-cleared", "device", d.Name,
+				"member", ref.Member, "memberUID", ref.MemberUID, "claim", ref.Namespace+"/"+ref.Name, "fencingToken", d.Status.FencingToken)
 			ctrlmetrics.ReferencesCleared.WithLabelValues(ctrlmetrics.ClearedClaimRef).Inc()
 			s.mu.Lock()
 			delete(s.stale, d.Name)

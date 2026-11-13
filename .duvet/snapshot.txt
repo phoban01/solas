@@ -454,6 +454,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation,test]: The sweeper MUST delete an expired `Member` with the resource version
     TEXT[!MUST,implementation,test]: that it observed.
     TEXT[!MUST,implementation]: The sweeper MUST NOT delete its own `Member`.
+    TEXT[!MUST,implementation,test]: The sweeper MUST log each `Member` that it deletes, with its name and
+    TEXT[!MUST,implementation,test]: UID.
 
   SECTION: [8.3. Clear stale claim references](#8-3-clear-stale-claim-references)
     TEXT[!MUST,implementation,test]: The sweeper MUST do a consistent list of devices first.
@@ -465,6 +467,8 @@ SPECIFICATION: [Solas specification](spec/solas.md)
     TEXT[!MUST,implementation]: If the clear fails with `409 Conflict`, the sweeper MUST skip the device
     TEXT[!MUST,implementation]: until its next run.
     TEXT[!MUST,implementation]: The sweeper MUST run at least once every `D`.
+    TEXT[!MUST,implementation,test]: The sweeper MUST log each `claimRef` that it clears, with the device, the
+    TEXT[!MUST,implementation,test]: member UID, and the fencing token.
 
   SECTION: [8.4. Safety](#8-4-safety)
     TEXT[test]: A sweeper deletes a `Member` only after the holder treats itself as not
